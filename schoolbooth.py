@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.4"
+APP_VERSION   = "3.0.5"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -2832,7 +2832,12 @@ class CameraApp(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Ready to Install",
-            f"The installer has been downloaded.\nLaunch it now?\n\n{dest_path}",
+            "The update has been downloaded and is ready to install.\n\n"
+            "\u26a0\ufe0f  Windows SmartScreen notice:\n"
+            "Because this installer is not yet widely distributed, Windows may show\n"
+            "a blue \u201cWindows protected your PC\u201d warning when it launches.\n"
+            "If that happens, click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d to continue.\n\n"
+            "Launch the installer now?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
@@ -2840,13 +2845,24 @@ class CameraApp(QMainWindow):
 
         launch_ok, launch_err = self._launch_installer(dest_path)
         if not launch_ok:
-            QMessageBox.warning(
-                self,
-                "Installer Launch Failed",
-                "Could not start the installer.\n"
-                f"Error: {launch_err}\n\n"
-                f"You can run it manually from:\n{dest_path}",
-            )
+            # Error code 1223 = user cancelled UAC/SmartScreen prompt
+            if "1223" in launch_err or "cancelled" in launch_err.lower():
+                QMessageBox.information(
+                    self,
+                    "Installation Cancelled",
+                    "The installer was cancelled.\n\n"
+                    "If Windows showed a SmartScreen warning, click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d "
+                    "and try again, or run the installer manually from:\n\n"
+                    f"{dest_path}",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Installer Launch Failed",
+                    "Could not start the installer.\n"
+                    f"Error: {launch_err}\n\n"
+                    f"You can run it manually from:\n{dest_path}",
+                )
             return
 
         close_reply = QMessageBox.question(
@@ -2870,11 +2886,21 @@ class CameraApp(QMainWindow):
         if sys.platform == "win32":
             try:
                 import ctypes
+                # Remove Mark-of-the-Web so SmartScreen doesn't hard-block the file
+                try:
+                    ctypes.windll.kernel32.DeleteFileW(installer_path + ":Zone.Identifier")
+                except Exception:
+                    pass
                 rc = ctypes.windll.shell32.ShellExecuteW(
                     None, "runas", installer_path, None, os.path.dirname(installer_path), 1
                 )
                 if rc <= 32:
-                    return False, f"ShellExecute error code {rc}"
+                    # rc 5 = SE_ERR_ACCESSDENIED (SmartScreen hard-block or UAC denied)
+                    # rc 1223 does not come from ShellExecuteW directly; raised via GetLastError
+                    last_err = ctypes.windll.kernel32.GetLastError()
+                    if last_err == 1223:
+                        return False, f"ShellExecute error code {rc} (error 1223 - cancelled)"
+                    return False, f"ShellExecute error code {rc} (GetLastError={last_err})"
                 return True, ""
             except Exception as exc:
                 return False, str(exc)
