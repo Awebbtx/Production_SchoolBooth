@@ -40,6 +40,24 @@ pyinstaller schoolbooth.spec
 
 Then build the installer with Inno Setup using `schoolbooth.iss`.
 
+## Build Installer From Git (PowerShell)
+
+For developer/operator machines, you can clone and build in one flow:
+
+```powershell
+git clone https://github.com/Awebbtx/Production_SchoolBooth.git
+cd Production_SchoolBooth
+powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
+```
+
+Notes:
+
+- This method is for building the app and installer from source.
+- End users should install from the released installer artifact, not from Git source.
+- Optional flags:
+	- `-NoVenv` uses system Python (`py -3`) instead of creating `.venv`
+	- `-NoInno` builds the executable only and skips installer packaging
+
 ## Quick Monitoring
 
 Use these commands from this folder to monitor repo health and release state:

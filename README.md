@@ -44,6 +44,10 @@ Windows installer input:
 
 - `schoolbooth.iss`
 
+PowerShell helper:
+
+- `build-installer.ps1` (builds executable and installer from this repo)
+
 ## Configuration Notes
 
 - `config.json` is checked in with safe defaults only.
