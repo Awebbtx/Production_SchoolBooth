@@ -3477,7 +3477,7 @@ class CameraApp(QMainWindow):
     def _overlay_settings_path(self):
         """Return path to the sidecar JSON that stores per-frame watermark settings."""
         base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, 'overlay_frame_settings.json')
+        return os.path.join(base, 'overlays.json')
 
     def _load_overlay_frame_settings(self):
         """Load per-frame settings from the sidecar file, or return empty dict."""

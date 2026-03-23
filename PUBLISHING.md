@@ -26,7 +26,7 @@ git push -u origin main
 - Confirm `output/` is absent
 - Confirm `.venv/` is absent
 - Confirm `config.json` still contains only safe defaults
-- Confirm `overlay_frame_settings.json` contains only production-safe frame metadata
+- Confirm `overlays.json` contains only production-safe frame metadata
 - Confirm `watermarks/FRAME_1.png` through `FRAME_4.png` are present
 
 ## Build Checks

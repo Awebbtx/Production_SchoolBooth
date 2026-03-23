@@ -14,9 +14,9 @@ output/
 # Local runtime state
 access_codes.json
 config.local.json
-overlay_frame_settings.local.json
+overlays.local.json
 config.backup*.json
-overlay_frame_settings.backup*.json
+overlays.backup*.json
 IKAPcam_License.rtf
 *.log
 

@@ -25,7 +25,7 @@ SolidCompression=yes
 ; MAIN APP FILES
 Source: "dist\schoolbooth.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "overlay_frame_settings.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "overlays.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE.TXT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "watermarks\*"; DestDir: "{app}\watermarks"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist

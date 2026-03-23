@@ -5,7 +5,7 @@
 - Isolated the Windows app into this clean repo folder
 - Excluded the WordPress plugin from the production file set
 - Sanitized `config.json` to remove live URLs, secrets, usernames, printer names, and machine-specific values
-- Sanitized `overlay_frame_settings.json` to remove custom absolute local paths
+- Sanitized `overlays.json` to remove custom absolute local paths
 - Kept sample overlay frames `FRAME_1.png` through `FRAME_4.png`
 - Hardened packaging inputs in `schoolbooth.spec` and `schoolbooth.iss`
 - Removed local generated icon fallback artifacts from the production scope

@@ -6,7 +6,7 @@ import importlib.util
 project_dir = Path(SPECPATH).resolve()
 datas = [
     ('config.json', '.'),
-    ('overlay_frame_settings.json', '.'),
+    ('overlays.json', '.'),
     ('app.png', '.'),
     ('LICENSE.TXT', '.'),
 ]
