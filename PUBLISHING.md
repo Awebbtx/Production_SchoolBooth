@@ -5,7 +5,7 @@ This folder is the clean app-only repo root to publish.
 ## Target Repository
 
 - `https://github.com/Awebbtx/Production_SchoolBooth.git`
-- Current tagged version: `v3.0.0`
+- Current tagged version: `v3.0.1`
 
 ## Local Publish Commands
 
