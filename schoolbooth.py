@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.2"
+APP_VERSION   = "3.0.3"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -2547,9 +2547,9 @@ class CameraApp(QMainWindow):
             (remove_watermark_action, "delete", QStyle.SP_TrashIcon),
             (photo_print_settings_action, "print", QStyle.SP_DialogSaveButton),
             (qr_label_settings_action, "qr_code", QStyle.SP_DialogSaveButton),
-            (local_storage_action, "settings", QStyle.SP_FileDialogContentsView),
-            (wordpress_action, "settings", QStyle.SP_DirIcon),
-            (hid_mapping_action, "settings", QStyle.SP_TitleBarMenuButton),
+            (local_storage_action, "folder_open", QStyle.SP_DirOpenIcon),
+            (wordpress_action, "cloud", QStyle.SP_DriveNetIcon),
+            (hid_mapping_action, "keyboard", QStyle.SP_TitleBarMenuButton),
             (self.crop_lines_action, "crop", QStyle.SP_FileDialogListView),
             (check_updates_action, "refresh", QStyle.SP_BrowserReload),
             (about_action, "info", QStyle.SP_MessageBoxInformation),
