@@ -2156,7 +2156,7 @@ class CameraApp(QMainWindow):
         print("CameraApp __init__ called.")
 
         # Initialize settings manager (single source of truth)
-        self.settings = SettingsManager('camera_settings.json')
+        self.settings = SettingsManager('config.json')
         
         self.setWindowTitle("Schoolbooth")
         self.setGeometry(100, 100, 1400, 800)

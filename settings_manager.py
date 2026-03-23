@@ -125,7 +125,7 @@ class SettingsManager:
     saving, defaults, and type conversion automatically.
     """
     
-    def __init__(self, settings_filename: str = 'camera_settings.json'):
+    def __init__(self, settings_filename: str = 'config.json'):
         """
         Initialize settings manager.
         

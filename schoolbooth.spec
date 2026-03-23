@@ -5,7 +5,7 @@ import importlib.util
 
 project_dir = Path(SPECPATH).resolve()
 datas = [
-    ('camera_settings.json', '.'),
+    ('config.json', '.'),
     ('overlay_frame_settings.json', '.'),
     ('app.png', '.'),
     ('LICENSE.TXT', '.'),

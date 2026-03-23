@@ -46,7 +46,7 @@ Windows installer input:
 
 ## Configuration Notes
 
-- `camera_settings.json` is checked in with safe defaults only.
+- `config.json` is checked in with safe defaults only.
 - Configure printers, WordPress integration, and device-specific values after deployment.
 - `overlay_frame_settings.json` contains only production-safe sample overlay metadata.
 
@@ -54,7 +54,7 @@ Windows installer input:
 
 - See `PRODUCTION_CHECKLIST.md` for the current app-only cleanup status.
 - See `PUBLISHING.md` for the GitHub handoff commands.
-- Verify `camera_settings.json` contains no live credentials
+- Verify `config.json` contains no live credentials
 - Verify `overlay_frame_settings.json` contains no absolute local paths
 - Verify `output/` and `.venv/` are not included in release commits
 - Verify sample overlay files remain in `watermarks/`
