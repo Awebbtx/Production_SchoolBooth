@@ -1,24 +1,15 @@
 """
-Settings Manager for Schoolbooth Application
+Settings Manager for Schoolbooth Application.
 
 Centralizes all settings management with a single source of truth.
 Handles loading, saving, defaults, and type conversion.
 
-Supports both flat and nested JSON structures with automatic conversion.
-Use flat keys like self.settings['camera_index'] or nested access like 
-self.settings.get_nested('camera.index')
+This production release uses one flat JSON settings format only.
 """
 
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
-from dataclasses import dataclass, asdict, field
-from enum import Enum
-
-try:
-    from settings_migration import SettingsMigration
-except ImportError:
-    SettingsMigration = None
+from typing import Any, Dict
 
 
 class SettingsSchema:
@@ -223,10 +214,6 @@ class SettingsManager:
         """
         Load settings from JSON file.
         
-        Supports both flat (v1.0) and nested (v2.0) JSON structures.
-        Nested structures are flattened for internal use but can be accessed
-        via nested keys with get_nested() and set_nested().
-        
         Returns:
             True if successful, False otherwise
         """
@@ -237,36 +224,31 @@ class SettingsManager:
             
             with open(self.settings_filename, 'r') as f:
                 loaded_settings = json.load(f)
-            
-            # Check if this is a nested v2.0 structure
-            if '_meta' in loaded_settings or any(isinstance(v, dict) for v in loaded_settings.values()):
-                # This is nested v2.0 structure, flatten it
-                print("Loaded nested v2.0 settings structure")
-                self._flatten_and_load_v2(loaded_settings)
-            else:
-                # This is flat v1.0 structure, load directly
-                # Type conversion and validation
-                for key, value in loaded_settings.items():
-                    if key in SettingsSchema.SETTINGS:
-                        expected_type = SettingsSchema.SETTINGS[key]['type']
-                        
-                        # Type conversion
-                        try:
-                            if expected_type == float and isinstance(value, (int, float)):
-                                self._data[key] = float(value)
-                            elif expected_type == int and isinstance(value, (int, float)):
-                                self._data[key] = int(value)
-                            elif expected_type == bool and isinstance(value, bool):
-                                self._data[key] = value
-                            elif expected_type == str and isinstance(value, str):
-                                self._data[key] = value
-                            else:
-                                self._data[key] = value
-                        except (ValueError, TypeError) as e:
-                            print(f"Warning: Could not convert {key}={value} to {expected_type}: {e}")
-                    else:
-                        # Accept unknown keys (may be v2.0 settings)
+
+            if not isinstance(loaded_settings, dict):
+                print("Settings file has invalid structure. Using defaults.")
+                return False
+
+            # Flat schema-only load for production.
+            for key, value in loaded_settings.items():
+                if key not in SettingsSchema.SETTINGS:
+                    continue
+
+                expected_type = SettingsSchema.SETTINGS[key]['type']
+
+                try:
+                    if expected_type == float and isinstance(value, (int, float)):
+                        self._data[key] = float(value)
+                    elif expected_type == int and isinstance(value, (int, float)):
+                        self._data[key] = int(value)
+                    elif expected_type == bool and isinstance(value, bool):
                         self._data[key] = value
+                    elif expected_type == str and isinstance(value, str):
+                        self._data[key] = value
+                    else:
+                        self._data[key] = value
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not convert {key}={value} to {expected_type}: {e}")
             
             return True
         
@@ -276,123 +258,6 @@ class SettingsManager:
         except Exception as e:
             print(f"Error loading settings: {e}. Using defaults.")
             return False
-    
-    def _flatten_and_load_v2(self, nested_settings: Dict) -> None:
-        """
-        Flatten nested v2.0 settings structure and load into _data.
-        
-        Maps nested keys like 'watermark.interactive' to flat keys
-        like 'watermark_interactive' based on schema definitions.
-        """
-        # Mapping of flat keys to nested paths for v2.0 structure
-        NESTED_PATHS = {
-            # Camera settings
-            'camera_index': ('camera', 'index'),
-            'camera_resolution': ('camera', 'resolution'),
-            'camera_quality': ('camera', 'quality'),
-            'camera_auto_focus': ('camera', 'auto_focus'),
-            'camera_focus_mode': ('camera', 'focus_mode'),
-            'camera_fps': ('camera', 'fps'),
-            
-            # Image settings
-            'rotation': ('image', 'rotation'),
-            'crop_size': ('image', 'crop_size'),
-            'show_crop_overlay': ('image', 'show_crop_overlay'),
-            'brightness': ('image', 'adjustments', 'brightness'),
-            'contrast': ('image', 'adjustments', 'contrast'),
-            'saturation': ('image', 'adjustments', 'saturation'),
-            'sharpness': ('image', 'adjustments', 'sharpness'),
-            'gamma': ('image', 'adjustments', 'gamma'),
-            'auto_wb': ('image', 'white_balance', 'auto'),
-            'wb_temp': ('image', 'white_balance', 'temperature_kelvin'),
-            'auto_color': ('image', 'color_correction', 'auto'),
-            
-            # Watermark settings
-            'watermark_enabled': ('watermark', 'enabled'),
-            'watermark_path': ('watermark', 'path'),
-            'watermark_x': ('watermark', 'position', 'x'),
-            'watermark_y': ('watermark', 'position', 'y'),
-            'watermark_size': ('watermark', 'transform', 'size'),
-            'watermark_opacity': ('watermark', 'transform', 'opacity'),
-            'watermark_rotation': ('watermark', 'transform', 'rotation'),
-            'watermark_scale': ('watermark', 'transform', 'scale'),
-            'watermark_remove_bg': ('watermark', 'background_removal'),
-            'watermark_interactive': ('watermark', 'interactive'),
-            'watermark_snap_grid': ('watermark', 'snap_grid'),
-            'watermark_snap_grid_step': ('watermark', 'snap_grid_step'),
-            'watermark_snap_center': ('watermark', 'snap_center'),
-            
-            # Output settings
-            'output_dir': ('output', 'directory'),
-            'output_auto_purge_enabled': ('output', 'auto_purge_enabled'),
-            'output_auto_purge_days': ('output', 'auto_purge_days'),
-            
-            # Printing settings
-            'photo_printing_enabled': ('printing', 'photo', 'enabled'),
-            'photo_printer': ('printing', 'photo', 'printer'),
-            'photo_print_access_code': ('printing', 'photo', 'print_access_code'),
-            'borderless_photo': ('printing', 'photo', 'borderless'),
-            'photo_paper_size': ('printing', 'photo', 'paper_size'),
-            'photo_quality': ('printing', 'photo', 'quality'),
-            'print_template': ('printing', 'photo', 'template'),
-            'auto_print_photo': ('printing', 'photo', 'auto_print'),
-            'qr_printing_enabled': ('printing', 'qr', 'enabled'),
-            'qr_printer': ('printing', 'qr', 'printer'),
-            'auto_print_qr': ('printing', 'qr', 'auto_print'),
-            'show_qr_print_preview': ('printing', 'qr', 'preview'),
-            'qr_print_mode': ('printing', 'qr', 'mode'),
-            'com_port': ('printing', 'qr', 'com_port'),
-            
-            # QR code settings
-            'qr_header': ('qr_codes', 'design', 'header'),
-            'qr_footer': ('qr_codes', 'design', 'footer'),
-            'qr_font_size': ('qr_codes', 'design', 'font_size'),
-            'qr_module_size': ('qr_codes', 'thermal', 'module_size'),
-            'qr_error_correction': ('qr_codes', 'thermal', 'error_correction'),
-            'text_font_type': ('qr_codes', 'thermal', 'text_font'),
-            'qr_paper_size': ('qr_codes', 'paper', 'size'),
-            'qr_margin_top': ('qr_codes', 'paper', 'margins', 'top'),
-            'qr_margin_left': ('qr_codes', 'paper', 'margins', 'left'),
-            'qr_margin_right': ('qr_codes', 'paper', 'margins', 'right'),
-            'qr_margin_bottom': ('qr_codes', 'paper', 'margins', 'bottom'),
-            
-            # Interface settings
-            'touch_mode': ('interface', 'touch_mode'),
-            'attendant_mode': ('interface', 'attendant_mode'),
-            'default_print_message': ('interface', 'default_print_message'),
-            'capture_label': ('interface', 'capture_label'),
-            
-            # WordPress settings
-            'wp_link_enabled': ('wordpress', 'integration_enabled'),
-            'wp_url': ('wordpress', 'url'),
-            'wp_shared_secret': ('wordpress', 'shared_secret'),
-            'wp_api_endpoint': ('wordpress', 'api', 'endpoint'),
-            'wp_api_timeout': ('wordpress', 'api', 'timeout'),
-            'wp_enroll_username': ('wordpress', 'enrollment', 'username'),
-            
-            # HID settings
-            'hid_device_id': ('input', 'hid_device_id'),
-            'hid_map_capture_image': ('input', 'hid_mappings', 'capture_image'),
-            'hid_map_navigate_left': ('input', 'hid_mappings', 'navigate_left'),
-            'hid_map_navigate_right': ('input', 'hid_mappings', 'navigate_right'),
-            'hid_map_select': ('input', 'hid_mappings', 'select'),
-        }
-        
-        # Try to extract each flat key from nested structure
-        for flat_key, nested_path in NESTED_PATHS.items():
-            value = self._get_nested_value(nested_settings, nested_path)
-            if value is not None:
-                self._data[flat_key] = value
-    
-    def _get_nested_value(self, data: Dict, path: tuple) -> Any:
-        """Extract value from nested dictionary using a path tuple."""
-        current = data
-        for key in path:
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            else:
-                return None
-        return current
     
     def save(self) -> bool:
         """
@@ -433,90 +298,6 @@ class SettingsManager:
     def get_schema(self) -> Dict[str, Dict[str, Any]]:
         """Get the complete settings schema."""
         return SettingsSchema.SETTINGS.copy()
-    
-    def get_nested(self, key_path: str, default: Any = None) -> Any:
-        """Get value using dot notation for nested keys.
-        
-        Examples:
-            self.settings.get_nested('camera.resolution')
-            self.settings.get_nested('printing.qr.mode')
-            
-        Args:
-            key_path: Dot-separated path (e.g., 'camera.resolution')
-            default: Default value if not found
-            
-        Returns:
-            Value at path or default
-        """
-        keys = key_path.split('.')
-        current = self._data
-        for key in keys:
-            if isinstance(current, dict):
-                current = current.get(key)
-                if current is None:
-                    return default
-            else:
-                return default
-        return current if current is not None else default
-    
-    def set_nested(self, key_path: str, value: Any) -> None:
-        """Set value using dot notation for nested keys.
-        
-        Examples:
-            self.settings.set_nested('camera.resolution', '1920x1080')
-            self.settings.set_nested('printing.qr.mode', 'thermal')
-            
-        Args:
-            key_path: Dot-separated path
-            value: Value to set
-        """
-        keys = key_path.split('.')
-        current = self._data
-        for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-        current[keys[-1]] = value
-    
-    def migrate_to_nested(self) -> bool:
-        """Migrate flat settings to nested v2.0 structure.
-        
-        Converts old flat key structure to new hierarchical structure
-        using the migration mapping. Backs up old file first.
-        
-        Returns:
-            True if migration successful, False otherwise
-        """
-        if not SettingsMigration:
-            print("Warning: settings_migration module not available. Skipping migration.")
-            return False
-        
-        try:
-            # Check if already migrated (has _meta)
-            if '_meta' in self._data:
-                return True
-            
-            # Backup old file
-            backup_file = self.settings_filename + '.bak'
-            if os.path.exists(self.settings_filename):
-                with open(self.settings_filename, 'r') as f:
-                    old_data = json.load(f)
-                with open(backup_file, 'w') as f:
-                    json.dump(old_data, f, indent=4)
-                print(f"Settings backup created: {backup_file}")
-            
-            # Migrate data
-            migrated = SettingsMigration.flatten_old_to_new(self._data)
-            self._data = migrated
-            
-            # Save migrated settings
-            self.save()
-            print("Settings migrated to v2.0 structure successfully")
-            return True
-            
-        except Exception as e:
-            print(f"Error during migration: {e}")
-            return False
     
     def __repr__(self) -> str:
         """String representation of settings manager."""

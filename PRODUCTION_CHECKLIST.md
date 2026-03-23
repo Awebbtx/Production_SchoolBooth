@@ -10,7 +10,7 @@
 - Hardened packaging inputs in `schoolbooth.spec` and `schoolbooth.iss`
 - Removed local generated icon fallback artifacts from the production scope
 - Added app-only documentation and repo ignore rules
-- Verified Python syntax for `schoolbooth.py`, `settings_manager.py`, and `settings_migration.py`
+- Verified Python syntax for `schoolbooth.py` and `settings_manager.py`
 
 ## Verified In Clean Tree
 
