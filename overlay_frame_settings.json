@@ -1,0 +1,38 @@
+{
+  "FRAME_1": {
+    "watermark_x": 50.0,
+    "watermark_y": 50.0,
+    "watermark_size": 30.0,
+    "watermark_opacity": 100.0,
+    "watermark_rotation": 0.0,
+    "watermark_scale": 3.0,
+    "watermark_remove_bg": false
+  },
+  "FRAME_2": {
+    "watermark_x": 50.0,
+    "watermark_y": 50.0,
+    "watermark_size": 30.0,
+    "watermark_opacity": 100.0,
+    "watermark_rotation": 0.0,
+    "watermark_scale": 3.0,
+    "watermark_remove_bg": false
+  },
+  "FRAME_3": {
+    "watermark_x": 50.0,
+    "watermark_y": 50.0,
+    "watermark_size": 30.0,
+    "watermark_opacity": 100.0,
+    "watermark_rotation": 0.0,
+    "watermark_scale": 3.0,
+    "watermark_remove_bg": false
+  },
+  "FRAME_4": {
+    "watermark_x": 50.0,
+    "watermark_y": 50.0,
+    "watermark_size": 30.0,
+    "watermark_opacity": 100.0,
+    "watermark_rotation": 0.0,
+    "watermark_scale": 3.0,
+    "watermark_remove_bg": false
+  }
+}

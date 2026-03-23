@@ -1,0 +1,27 @@
+# Python environments
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs
+build/
+dist/
+output/
+*.spec.bak
+*.iss.bak
+
+# Local runtime state
+access_codes.json
+camera_settings.local.json
+overlay_frame_settings.local.json
+camera_settings.backup*.json
+overlay_frame_settings.backup*.json
+*.log
+
+# Editor files
+.vscode/
+.idea/
+*.code-workspace
+Thumbs.db
+.DS_Store
