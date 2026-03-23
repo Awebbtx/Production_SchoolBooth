@@ -127,6 +127,14 @@ GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Schoolbooth"
 
 
+def app_resource_path(relative_path):
+    """Return a path to a bundled resource for both source and PyInstaller runs."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, relative_path)
+
+
 class HIDMappingDialog(QDialog):
     """
     A dialog for mapping HID device inputs to application actions.
@@ -2160,6 +2168,11 @@ class CameraApp(QMainWindow):
         
         self.setWindowTitle("Schoolbooth")
         self.setGeometry(100, 100, 1400, 800)
+        app_icon_path = app_resource_path("app.ico")
+        if os.path.exists(app_icon_path):
+            app_icon = QIcon(app_icon_path)
+            if not app_icon.isNull():
+                self.setWindowIcon(app_icon)
 
         # Initialize data and state
         self.unsaved_changes = False
@@ -4751,7 +4764,7 @@ class CameraApp(QMainWindow):
     def load_logo(self):
         """Loads a neutral app image for the header area if available."""
         try:
-            header_pixmap = QPixmap("app.png")
+            header_pixmap = QPixmap(app_resource_path("app.png"))
             if not header_pixmap.isNull():
                 header_pixmap = header_pixmap.scaledToWidth(300, Qt.SmoothTransformation)
                 self.logo_label.setPixmap(header_pixmap)
@@ -4769,7 +4782,7 @@ class CameraApp(QMainWindow):
             icon = self._get_material_icon("photo_camera", size=48)
             if icon.isNull():
                 # Fallback to bundled app icon if material icon package is unavailable.
-                icon_path = "app.png"
+                icon_path = app_resource_path("app.png")
                 if os.path.exists(icon_path):
                     icon = QIcon(icon_path)
 
@@ -5454,6 +5467,11 @@ class CameraApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app_icon_path = app_resource_path("app.ico")
+    if os.path.exists(app_icon_path):
+        app_icon = QIcon(app_icon_path)
+        if not app_icon.isNull():
+            app.setWindowIcon(app_icon)
     # Set a comfortable base font so the UI doesn't look tiny on modern displays
     from PyQt5.QtGui import QFont
     _font = QFont()

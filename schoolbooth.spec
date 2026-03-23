@@ -2,14 +2,18 @@
 
 from pathlib import Path
 import importlib.util
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 project_dir = Path(SPECPATH).resolve()
 datas = [
     ('config.json', '.'),
     ('overlays.json', '.'),
+    ('app.ico', '.'),
     ('app.png', '.'),
     ('LICENSE.TXT', '.'),
 ]
+
+datas += collect_data_files('qt_material_icons')
 
 watermarks_dir = project_dir / 'watermarks'
 if watermarks_dir.exists():
@@ -29,7 +33,7 @@ a = Analysis(
     pathex=[str(project_dir)],
     binaries=[],
     datas=datas,
-    hiddenimports=['escpos', 'escpos.printer', 'win32print', 'win32api', 'win32con', 'win32gui'],
+    hiddenimports=['escpos', 'escpos.printer', 'win32print', 'win32api', 'win32con', 'win32gui'] + collect_submodules('qt_material_icons'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
