@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.3"
+APP_VERSION   = "3.0.4"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -2072,6 +2072,57 @@ class UpdateCheckWorker(QThread):
             self.up_to_date.emit(APP_VERSION)
 
 
+class UpdateDownloadWorker(QThread):
+    """Download release installer in a worker thread so the UI stays responsive."""
+    progress_changed = pyqtSignal(int)
+    download_finished = pyqtSignal(str)   # (dest_path,)
+    download_failed = pyqtSignal(str)     # (error_message,)
+
+    def __init__(self, asset_url, dest_path, parent=None):
+        super().__init__(parent)
+        self.asset_url = asset_url
+        self.dest_path = dest_path
+        self._cancel_requested = False
+
+    def cancel(self):
+        self._cancel_requested = True
+
+    def run(self):
+        import os
+        from urllib import request as _req
+
+        tmp_path = self.dest_path + ".part"
+        try:
+            req = _req.Request(self.asset_url, headers={"User-Agent": f"Schoolbooth/{APP_VERSION}"})
+            with _req.urlopen(req, timeout=30) as resp:
+                total_size = int(resp.headers.get("Content-Length", "0") or 0)
+                bytes_read = 0
+                chunk_size = 64 * 1024
+                with open(tmp_path, "wb") as out:
+                    while True:
+                        if self._cancel_requested:
+                            raise RuntimeError("Download cancelled.")
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        bytes_read += len(chunk)
+                        if total_size > 0:
+                            pct = max(0, min(100, int(bytes_read * 100 / total_size)))
+                            self.progress_changed.emit(pct)
+
+            os.replace(tmp_path, self.dest_path)
+            self.progress_changed.emit(100)
+            self.download_finished.emit(self.dest_path)
+        except Exception as exc:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            self.download_failed.emit(str(exc))
+
+
 class HealthCheckWorker(QThread):
     """Background thread that checks camera, internet, WordPress, and printer health."""
     results_ready = pyqtSignal(dict)
@@ -2737,50 +2788,102 @@ class CameraApp(QMainWindow):
             webbrowser.open(html_url)
 
     def _download_and_install_update(self, asset_url, latest_tag):
-        """Download the installer asset to %TEMP% and run it."""
-        import tempfile, os, subprocess
-        import urllib.request as _req
+        """Download installer in the background; only close app after confirmed launch."""
+        import tempfile, os
 
-        filename  = f"SchoolboothSetup-v{latest_tag}.exe"
+        filename = f"SchoolboothSetup-v{latest_tag}.exe"
         dest_path = os.path.join(tempfile.gettempdir(), filename)
 
-        progress = QProgressDialog(
-            f"Downloading Schoolbooth v{latest_tag}…", "Cancel", 0, 100, self
+        self._update_download_progress = QProgressDialog(
+            f"Downloading Schoolbooth v{latest_tag}...", "Cancel", 0, 100, self
         )
-        progress.setWindowTitle("Downloading Update")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
+        self._update_download_progress.setWindowTitle("Downloading Update")
+        self._update_download_progress.setWindowModality(Qt.WindowModal)
+        self._update_download_progress.setMinimumDuration(0)
+        self._update_download_progress.setValue(0)
 
-        cancelled = [False]
+        self._update_download_worker = UpdateDownloadWorker(asset_url, dest_path, self)
+        self._update_download_worker.progress_changed.connect(
+            self._update_download_progress.setValue
+        )
+        self._update_download_worker.download_failed.connect(
+            self._on_update_download_failed
+        )
+        self._update_download_worker.download_finished.connect(
+            self._on_update_download_finished
+        )
+        self._update_download_progress.canceled.connect(
+            self._update_download_worker.cancel
+        )
+        self._update_download_worker.start()
 
-        def _reporthook(block_num, block_size, total_size):
-            if progress.wasCanceled():
-                cancelled[0] = True
-                raise Exception("Download cancelled by user.")
-            if total_size > 0:
-                pct = min(int(block_num * block_size * 100 / total_size), 100)
-                progress.setValue(pct)
-            QApplication.processEvents()
-
-        try:
-            _req.urlretrieve(asset_url, dest_path, reporthook=_reporthook)
-        except Exception as exc:
-            progress.close()
-            if not cancelled[0]:
-                QMessageBox.warning(self, "Download Failed", f"Could not download the update:\n{exc}")
+    def _on_update_download_failed(self, err):
+        if hasattr(self, "_update_download_progress") and self._update_download_progress:
+            self._update_download_progress.close()
+        # Ignore explicit user cancel noise.
+        if "cancel" in (err or "").lower():
             return
+        QMessageBox.warning(self, "Download Failed", f"Could not download the update:\n{err}")
 
-        progress.close()
+    def _on_update_download_finished(self, dest_path):
+        if hasattr(self, "_update_download_progress") and self._update_download_progress:
+            self._update_download_progress.close()
 
         reply = QMessageBox.question(
-            self, "Ready to Install",
+            self,
+            "Ready to Install",
             f"The installer has been downloaded.\nLaunch it now?\n\n{dest_path}",
             QMessageBox.Yes | QMessageBox.No,
         )
-        if reply == QMessageBox.Yes:
-            subprocess.Popen([dest_path])  # run installer; it will replace the running app
+        if reply != QMessageBox.Yes:
+            return
+
+        launch_ok, launch_err = self._launch_installer(dest_path)
+        if not launch_ok:
+            QMessageBox.warning(
+                self,
+                "Installer Launch Failed",
+                "Could not start the installer.\n"
+                f"Error: {launch_err}\n\n"
+                f"You can run it manually from:\n{dest_path}",
+            )
+            return
+
+        close_reply = QMessageBox.question(
+            self,
+            "Installer Started",
+            "The installer started successfully.\n"
+            "Close Schoolbooth now so the update can continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if close_reply == QMessageBox.Yes:
             QApplication.quit()
+
+    @staticmethod
+    def _launch_installer(installer_path):
+        """Launch installer with elevation prompt on Windows."""
+        import os
+        if not os.path.exists(installer_path):
+            return False, "Installer file not found"
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                rc = ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", installer_path, None, os.path.dirname(installer_path), 1
+                )
+                if rc <= 32:
+                    return False, f"ShellExecute error code {rc}"
+                return True, ""
+            except Exception as exc:
+                return False, str(exc)
+
+        try:
+            subprocess.Popen([installer_path])
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
 
     def show_about(self):
         about_text = (
