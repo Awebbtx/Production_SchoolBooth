@@ -1,26 +1,31 @@
-# Python environments
+# Python environments and caches
 .venv/
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Build outputs
+# Build and packaging outputs
 build/
 dist/
 output/
 *.spec.bak
 *.iss.bak
 
-# Local runtime state
+# Local runtime state (never commit)
 access_codes.json
 config.local.json
 overlays.local.json
 config.backup*.json
 overlays.backup*.json
-IKAPcam_License.rtf
 *.log
 
-# Editor files
+# Legacy local artifacts to keep out of git
+IKAPcam_License.rtf
+
+# Editor and OS files
 .vscode/
 .idea/
 *.code-workspace
