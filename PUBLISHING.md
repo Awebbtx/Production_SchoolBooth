@@ -5,6 +5,7 @@ This folder is the clean app-only repo root to publish.
 ## Target Repository
 
 - `https://github.com/Awebbtx/Production_SchoolBooth.git`
+- Current tagged version: `v3.0.0`
 
 ## Local Publish Commands
 
@@ -38,3 +39,14 @@ pyinstaller schoolbooth.spec
 ```
 
 Then build the installer with Inno Setup using `schoolbooth.iss`.
+
+## Quick Monitoring
+
+Use these commands from this folder to monitor repo health and release state:
+
+```powershell
+git fetch origin --tags
+git status --short --branch
+git log --oneline --decorate -n 5
+git tag --list
+```
