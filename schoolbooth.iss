@@ -26,7 +26,6 @@ SolidCompression=yes
 Source: "dist\schoolbooth.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "camera_settings.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "overlay_frame_settings.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "logo_PB.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE.TXT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "watermarks\*"; DestDir: "{app}\watermarks"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist

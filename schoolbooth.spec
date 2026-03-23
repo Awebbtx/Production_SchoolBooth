@@ -7,7 +7,6 @@ project_dir = Path(SPECPATH).resolve()
 datas = [
     ('camera_settings.json', '.'),
     ('overlay_frame_settings.json', '.'),
-    ('logo_PB.png', '.'),
     ('app.png', '.'),
     ('LICENSE.TXT', '.'),
 ]
