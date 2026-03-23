@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import importlib.util
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_submodules
 
 project_dir = Path(SPECPATH).resolve()
 datas = [
@@ -12,8 +12,6 @@ datas = [
     ('app.png', '.'),
     ('LICENSE.TXT', '.'),
 ]
-
-datas += collect_data_files('qt_material_icons')
 
 watermarks_dir = project_dir / 'watermarks'
 if watermarks_dir.exists():
@@ -33,7 +31,25 @@ a = Analysis(
     pathex=[str(project_dir)],
     binaries=[],
     datas=datas,
-    hiddenimports=['escpos', 'escpos.printer', 'win32print', 'win32api', 'win32con', 'win32gui', 'PyQt5.QtSvg', 'qtpy.QtSvg'] + collect_submodules('qt_material_icons'),
+    hiddenimports=[
+        'escpos', 'escpos.printer',
+        'win32print', 'win32api', 'win32con', 'win32gui',
+        'PyQt5.QtSvg', 'qtpy.QtSvg',
+        # qt_material_icons resource modules live in a directory without __init__.py
+        # so collect_submodules() misses them — list them explicitly.
+        'qt_material_icons.resources.icons_outlined_20',
+        'qt_material_icons.resources.icons_outlined_24',
+        'qt_material_icons.resources.icons_outlined_40',
+        'qt_material_icons.resources.icons_outlined_48',
+        'qt_material_icons.resources.icons_rounded_20',
+        'qt_material_icons.resources.icons_rounded_24',
+        'qt_material_icons.resources.icons_rounded_40',
+        'qt_material_icons.resources.icons_rounded_48',
+        'qt_material_icons.resources.icons_sharp_20',
+        'qt_material_icons.resources.icons_sharp_24',
+        'qt_material_icons.resources.icons_sharp_40',
+        'qt_material_icons.resources.icons_sharp_48',
+    ] + collect_submodules('qt_material_icons'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -123,9 +123,9 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.0"
+APP_VERSION   = "3.0.2"
 GITHUB_OWNER  = "Awebbtx"
-GITHUB_REPO   = "Schoolbooth"
+GITHUB_REPO   = "Production_SchoolBooth"
 
 
 def app_resource_path(relative_path):
@@ -2034,9 +2034,9 @@ class QRPrintSettingsDialog(QDialog):
 
 class UpdateCheckWorker(QThread):
     """Background thread that queries the GitHub Releases API."""
-    update_available = pyqtSignal(str, str)   # (latest_version, release_url)
-    up_to_date       = pyqtSignal(str)         # (current_version,)
-    check_error      = pyqtSignal(str)         # (error_message,)
+    update_available = pyqtSignal(str, str, str)  # (latest_version, release_url, asset_download_url)
+    up_to_date       = pyqtSignal(str)             # (current_version,)
+    check_error      = pyqtSignal(str)             # (error_message,)
 
     def run(self):
         api_url = (
@@ -2051,6 +2051,13 @@ class UpdateCheckWorker(QThread):
                 data = json.loads(resp.read().decode())
             latest_tag = data.get("tag_name", "").lstrip("v")
             html_url   = data.get("html_url", "")
+            # Find the .exe installer asset (e.g. SchoolboothSetup-v3.0.2.exe)
+            asset_url  = ""
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                if name.lower().endswith(".exe"):
+                    asset_url = asset.get("browser_download_url", "")
+                    break
         except Exception as exc:
             self.check_error.emit(str(exc))
             return
@@ -2060,7 +2067,7 @@ class UpdateCheckWorker(QThread):
             return tuple(int(p) for p in parts)
 
         if _ver(latest_tag) > _ver(APP_VERSION):
-            self.update_available.emit(latest_tag, html_url)
+            self.update_available.emit(latest_tag, html_url, asset_url)
         else:
             self.up_to_date.emit(APP_VERSION)
 
@@ -2661,6 +2668,10 @@ class CameraApp(QMainWindow):
         self.clear_overlay()
         QMessageBox.information(self, "Watermark Removed", "Watermark has been removed from the system.")
 
+    # ------------------------------------------------------------------
+    # Update checking / installing
+    # ------------------------------------------------------------------
+
     def check_for_updates(self, silent=False):
         """Query GitHub Releases for a newer version (runs in background thread)."""
         self._update_check_silent = bool(silent)
@@ -2694,21 +2705,82 @@ class CameraApp(QMainWindow):
                 f"Could not reach GitHub:\n{err}"
             )
 
-    def _on_update_available(self, latest_tag, html_url):
-        import webbrowser
+    def _on_update_available(self, latest_tag, html_url, asset_url):
+        import webbrowser, tempfile, subprocess, os
         self.latest_release_version = latest_tag
         self.update_check_status = f"Update available: v{latest_tag}"
+
         msg = QMessageBox(self)
         msg.setWindowTitle("Update Available")
         msg.setText(
-            f"A new version is available: v{latest_tag}\n"
-            f"You are running: v{APP_VERSION}"
+            f"<b>Version v{latest_tag} is available.</b><br>"
+            f"You are running v{APP_VERSION}."
         )
-        msg.setInformativeText("Open the GitHub release page to download the update?")
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.Yes)
-        if msg.exec_() == QMessageBox.Yes:
+        if asset_url:
+            msg.setInformativeText(
+                "Click <b>Download & Install</b> to update automatically,\n"
+                "or <b>Open Browser</b> to download manually."
+            )
+            dl_btn      = msg.addButton("Download && Install", QMessageBox.AcceptRole)
+            browser_btn = msg.addButton("Open Browser",        QMessageBox.ActionRole)
+        else:
+            msg.setInformativeText("No installer asset found.\nOpen the GitHub release page to download manually.")
+            dl_btn      = None
+            browser_btn = msg.addButton("Open Browser", QMessageBox.AcceptRole)
+        msg.addButton("Later", QMessageBox.RejectRole)
+        msg.exec_()
+
+        clicked = msg.clickedButton()
+        if dl_btn and clicked == dl_btn:
+            self._download_and_install_update(asset_url, latest_tag)
+        elif clicked == browser_btn:
             webbrowser.open(html_url)
+
+    def _download_and_install_update(self, asset_url, latest_tag):
+        """Download the installer asset to %TEMP% and run it."""
+        import tempfile, os, subprocess
+        import urllib.request as _req
+
+        filename  = f"SchoolboothSetup-v{latest_tag}.exe"
+        dest_path = os.path.join(tempfile.gettempdir(), filename)
+
+        progress = QProgressDialog(
+            f"Downloading Schoolbooth v{latest_tag}…", "Cancel", 0, 100, self
+        )
+        progress.setWindowTitle("Downloading Update")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        cancelled = [False]
+
+        def _reporthook(block_num, block_size, total_size):
+            if progress.wasCanceled():
+                cancelled[0] = True
+                raise Exception("Download cancelled by user.")
+            if total_size > 0:
+                pct = min(int(block_num * block_size * 100 / total_size), 100)
+                progress.setValue(pct)
+            QApplication.processEvents()
+
+        try:
+            _req.urlretrieve(asset_url, dest_path, reporthook=_reporthook)
+        except Exception as exc:
+            progress.close()
+            if not cancelled[0]:
+                QMessageBox.warning(self, "Download Failed", f"Could not download the update:\n{exc}")
+            return
+
+        progress.close()
+
+        reply = QMessageBox.question(
+            self, "Ready to Install",
+            f"The installer has been downloaded.\nLaunch it now?\n\n{dest_path}",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            subprocess.Popen([dest_path])  # run installer; it will replace the running app
+            QApplication.quit()
 
     def show_about(self):
         about_text = (

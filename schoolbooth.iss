@@ -1,7 +1,7 @@
 [Setup]
 ; BASIC INFO
 AppName=Schoolbooth
-AppVersion=3.0.1
+AppVersion=3.0.2
 AppPublisher=I Know A Pro, LLC
 AppPublisherURL=https://www.iknowapro.net
 AppSupportURL=mailto:service@iknowapro.net
@@ -16,7 +16,7 @@ UninstallDisplayIcon={app}\schoolbooth.exe
 ; INSTALLER SETTINGS
 DefaultDirName={autopf}\Schoolbooth
 DefaultGroupName=Schoolbooth
-OutputBaseFilename=SchoolboothSetup-v3.0.1
+OutputBaseFilename=SchoolboothSetup-v3.0.2
 OutputDir=output
 Compression=lzma2
 SolidCompression=yes
