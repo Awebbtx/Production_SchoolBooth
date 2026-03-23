@@ -4749,18 +4749,18 @@ class CameraApp(QMainWindow):
         pass
 
     def load_logo(self):
-        """Loads the logo image, handles potential errors, and sets the pixmap."""
+        """Loads a neutral app image for the header area if available."""
         try:
-            logo_pixmap = QPixmap("logo_PB.png")  # Assumes logo is in the same directory
-            if not logo_pixmap.isNull():
-                logo_pixmap = logo_pixmap.scaledToWidth(300, Qt.SmoothTransformation)
-                self.logo_label.setPixmap(logo_pixmap)
+            header_pixmap = QPixmap("app.png")
+            if not header_pixmap.isNull():
+                header_pixmap = header_pixmap.scaledToWidth(300, Qt.SmoothTransformation)
+                self.logo_label.setPixmap(header_pixmap)
             else:
-                self.logo_label.setText("Logo Image Missing")
+                self.logo_label.setText("Schoolbooth")
                 self.logo_label.setStyleSheet("font-size: 16px; color: #666;")
         except Exception as e:
             print(f"Error loading logo: {e}")
-            self.logo_label.setText("Logo Image Error")
+            self.logo_label.setText("Schoolbooth")
             self.logo_label.setStyleSheet("font-size: 16px; color: #ff0000;")
 
     def load_button_icons(self):
