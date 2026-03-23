@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QDialogButtonBox, QMenu, QAction, QMenuBar,
                              QLineEdit, QFormLayout, QSizePolicy, QTextEdit,
                              QInputDialog, QScrollArea, QToolTip, QListWidget, QStyle)
+from PyQt5 import QtSvg
 
 import qrcode
 from reportlab.lib.pagesizes import letter
@@ -129,10 +130,42 @@ GITHUB_REPO   = "Schoolbooth"
 
 def app_resource_path(relative_path):
     """Return a path to a bundled resource for both source and PyInstaller runs."""
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
+    for candidate in app_resource_candidates(relative_path):
+        if os.path.exists(candidate):
+            return candidate
+    return app_resource_candidates(relative_path)[0]
+
+
+def app_resource_candidates(relative_path):
+    """Return likely resource locations in priority order for source and frozen runs."""
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        if hasattr(sys, '_MEIPASS'):
+            candidates.append(os.path.join(sys._MEIPASS, relative_path))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, relative_path))
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_dir, relative_path)
+    candidates.append(os.path.join(base_dir, relative_path))
+    candidates.append(os.path.join(os.getcwd(), relative_path))
+
+    # Deduplicate while preserving order.
+    unique_candidates = []
+    for candidate in candidates:
+        if candidate not in unique_candidates:
+            unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def load_app_icon():
+    """Load the best available app icon from bundled resources."""
+    for icon_name in ("app.ico", "app.png"):
+        for icon_path in app_resource_candidates(icon_name):
+            if os.path.exists(icon_path):
+                icon = QIcon(icon_path)
+                if not icon.isNull():
+                    return icon
+    return QIcon()
 
 
 class HIDMappingDialog(QDialog):
@@ -2168,11 +2201,9 @@ class CameraApp(QMainWindow):
         
         self.setWindowTitle("Schoolbooth")
         self.setGeometry(100, 100, 1400, 800)
-        app_icon_path = app_resource_path("app.ico")
-        if os.path.exists(app_icon_path):
-            app_icon = QIcon(app_icon_path)
-            if not app_icon.isNull():
-                self.setWindowIcon(app_icon)
+        app_icon = load_app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
 
         # Initialize data and state
         self.unsaved_changes = False
@@ -4798,17 +4829,18 @@ class CameraApp(QMainWindow):
             from qt_material_icons import MaterialIcon
             # Common packaged resource buckets are usually 24/48; try requested size first.
             candidate_sizes = []
-            for candidate in (size, 24, 48, 20):
+            for candidate in (size, 24, 40, 48, 20):
                 if isinstance(candidate, int) and candidate > 0 and candidate not in candidate_sizes:
                     candidate_sizes.append(candidate)
 
             for icon_size in candidate_sizes:
-                try:
-                    icon = MaterialIcon(name, size=icon_size)
-                    if not icon.isNull():
-                        return icon
-                except Exception:
-                    continue
+                for icon_style in (MaterialIcon.OUTLINED, MaterialIcon.ROUNDED, MaterialIcon.SHARP):
+                    try:
+                        icon = MaterialIcon(name, style=icon_style, size=icon_size)
+                        if not icon.isNull():
+                            return icon
+                    except Exception:
+                        continue
 
             return QIcon()
         except Exception:
@@ -5467,11 +5499,9 @@ class CameraApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app_icon_path = app_resource_path("app.ico")
-    if os.path.exists(app_icon_path):
-        app_icon = QIcon(app_icon_path)
-        if not app_icon.isNull():
-            app.setWindowIcon(app_icon)
+    app_icon = load_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
     # Set a comfortable base font so the UI doesn't look tiny on modern displays
     from PyQt5.QtGui import QFont
     _font = QFont()
