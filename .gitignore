@@ -17,6 +17,7 @@ camera_settings.local.json
 overlay_frame_settings.local.json
 camera_settings.backup*.json
 overlay_frame_settings.backup*.json
+IKAPcam_License.rtf
 *.log
 
 # Editor files

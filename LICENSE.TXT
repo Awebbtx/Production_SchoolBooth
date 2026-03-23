@@ -1,34 +1,39 @@
-IKAPcam Software License Agreement
-*Copyright © 2025 Anthony Webb / IKnowAPro.Net*
-Licensed to: NBPTA.ORG - Oak Creek Elementary School PTA
+Schoolbooth Software License Agreement
+Copyright (c) 2026 I Know A Pro, LLC
 
-1. GRANT OF LICENSE
-IKnowAPro.Net grants the Oak Creek Elementary Parent Teacher Association:
-✓ Unlimited use for school events and PTA functions
-✓ Rights to use photos for newsletters, social media, and fundraising
-✓ Installation on all school-owned devices
-✓ Includes all software updates through June 30, 2026
+1. Grant of License
+I Know A Pro, LLC grants the licensed organization a non-exclusive, non-transferable
+license to install and use Schoolbooth for school and event photo operations.
 
-2. RESTRICTIONS
-✗ No commercial use outside PTA activities
-✗ No modifications, reverse engineering, or redistribution
-✗ No transfer to third parties without written consent
+2. Restrictions
+- No resale, sublicensing, or redistribution without written permission.
+- No reverse engineering, decompilation, or derivative distribution except where
+	required by applicable law.
+- No use of the software for unlawful activity.
 
-3. PHOTO USAGE RIGHTS
-• PTA retains all rights to photos generated
-• Responsible for obtaining participant releases when required
-• Developer claims no ownership of captured images
+3. Photo and Data Responsibility
+- The licensed organization is responsible for obtaining required participant consent.
+- The licensed organization is responsible for how captured photos are used,
+	retained, and shared after capture.
 
-4. SUPPORT & MAINTENANCE
-Includes:
-• Email support for 1 year
-• One volunteer training session
-• Bug fixes during license term
+4. Warranty Disclaimer
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, AND NON-INFRINGEMENT.
 
-5. DISCLAIMER
-THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY. IKnowAPro.Net shall not be liable for any damages arising from use of this software.
+5. Limitation of Liability
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, I KNOW A PRO, LLC SHALL NOT BE LIABLE
+FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR EXEMPLARY DAMAGES
+ARISING FROM THE USE OF OR INABILITY TO USE THIS SOFTWARE.
 
-6. TERM
-This agreement is valid until June 30, 2026. Unauthorized use terminates all rights immediately.
+6. Termination
+This license terminates automatically if these terms are violated. On termination,
+the licensee must stop using and remove all installed copies.
 
-By installing this software, the Oak Creek Elementary PTA agrees to these terms.
+7. Governing Law
+This agreement is governed by applicable local and state law where the licensed
+organization operates, unless otherwise defined in a separate signed contract.
+
+8. Entire Agreement
+This file defines the default software license terms unless superseded by a separate
+signed agreement between the parties.
