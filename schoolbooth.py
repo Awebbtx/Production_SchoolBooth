@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.5"
+APP_VERSION   = "3.0.6"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -510,8 +510,10 @@ class WPLinkSettingsDialog(QDialog):
             QMessageBox.critical(self, "Connection Failed", f"Error: {str(e)}")
 
     def _test_api_connection(self):
-        base_url = self.url_edit.text().rstrip('/')
-        endpoint = self.parent.settings.get('wp_api_endpoint', '/wp-json/pta-schoolbooth/v1/ingest').strip()
+        _raw_url = self.url_edit.text().strip().rstrip('/')
+        _wp_json_idx = _raw_url.find('/wp-json/')
+        base_url = _raw_url[:_wp_json_idx] if _wp_json_idx != -1 else _raw_url
+        endpoint = self.parent.settings.get('wp_api_endpoint', '/wp-json/schoolbooth/v1/ingest').strip()
         secret = self.parent.settings.get('wp_shared_secret', '')
         if not base_url:
             raise RuntimeError("WordPress URL is required for HTTPS API testing")
@@ -530,11 +532,16 @@ class WPLinkSettingsDialog(QDialog):
         ).hexdigest()
         timeout = int(self.api_timeout_spin.value())
 
+        _known_ns = ['/schoolbooth/', '/pta-schoolbooth/', '/nbpta/']
         ping_candidates = [ping_url]
-        if '/pta-schoolbooth/' in ping_url:
-            ping_candidates.append(ping_url.replace('/pta-schoolbooth/', '/nbpta/'))
-        elif '/nbpta/' in ping_url:
-            ping_candidates.append(ping_url.replace('/nbpta/', '/pta-schoolbooth/'))
+        for _ns in _known_ns:
+            if _ns in ping_url:
+                for _other_ns in _known_ns:
+                    if _other_ns != _ns:
+                        _alt = ping_url.replace(_ns, _other_ns, 1)
+                        if _alt not in ping_candidates:
+                            ping_candidates.append(_alt)
+                break
 
         last_error = None
         for candidate in ping_candidates:
@@ -544,8 +551,9 @@ class WPLinkSettingsDialog(QDialog):
                     data=json.dumps({"probe": "ping"}).encode('utf-8'),
                     headers={
                         'Content-Type': 'application/json',
-                        'X-PTASB-Timestamp': timestamp,
-                        'X-PTASB-Signature': signature,
+                        'User-Agent': f'Mozilla/5.0 (compatible; Schoolbooth/{APP_VERSION})',
+                        'X-Schoolbooth-Timestamp': timestamp,
+                        'X-Schoolbooth-Signature': signature,
                     },
                     method='POST'
                 )
@@ -554,12 +562,15 @@ class WPLinkSettingsDialog(QDialog):
                         raise RuntimeError(f"API ping failed with HTTP {response.status}")
 
                 if candidate != ping_url:
-                    # Keep future requests on the reachable namespace.
+                    # Update stored endpoint to match the working namespace.
                     current = self.parent.settings.get('wp_api_endpoint', '')
-                    if '/pta-schoolbooth/' in current:
-                        self.parent.settings['wp_api_endpoint'] = current.replace('/pta-schoolbooth/', '/nbpta/')
-                    else:
-                        self.parent.settings['wp_api_endpoint'] = current.replace('/nbpta/', '/pta-schoolbooth/')
+                    for _wns in _known_ns:
+                        if _wns in candidate:
+                            for _ons in _known_ns:
+                                if _ons != _wns and _ons in current:
+                                    self.parent.settings['wp_api_endpoint'] = current.replace(_ons, _wns, 1)
+                                    break
+                            break
                 return
             except urllib_error.HTTPError as http_err:
                 last_error = http_err
@@ -572,7 +583,11 @@ class WPLinkSettingsDialog(QDialog):
         raise RuntimeError('API ping failed for all supported endpoint variants')
 
     def enroll_with_wordpress_login(self):
-        base_url = self.url_edit.text().rstrip('/')
+        _raw_url = self.url_edit.text().strip().rstrip('/')
+        _wp_json_idx = _raw_url.find('/wp-json/')
+        base_url = _raw_url[:_wp_json_idx] if _wp_json_idx != -1 else _raw_url
+        if base_url != _raw_url:
+            self.url_edit.setText(base_url)
         username = self.enroll_username_edit.text().strip()
         app_password = self.enroll_app_password_edit.text().strip()
 
@@ -589,6 +604,7 @@ class WPLinkSettingsDialog(QDialog):
             return
 
         enroll_candidates = [
+            f"{base_url}/wp-json/schoolbooth/v1/enroll",
             f"{base_url}/wp-json/pta-schoolbooth/v1/enroll",
             f"{base_url}/wp-json/nbpta/v1/enroll",
         ]
@@ -599,6 +615,7 @@ class WPLinkSettingsDialog(QDialog):
             headers = {
                 'Content-Type': 'application/json',
                 'Authorization': f'Basic {basic_token}',
+                'User-Agent': f'Mozilla/5.0 (compatible; Schoolbooth/{APP_VERSION})',
             }
 
             # Ensure a stable per-device instance ID exists.
@@ -2167,8 +2184,8 @@ class HealthCheckWorker(QThread):
                     headers = {
                         "User-Agent": f"Schoolbooth/{APP_VERSION}",
                         "Content-Type": "application/json",
-                        "X-PTASB-Timestamp": timestamp,
-                        "X-PTASB-Signature": sig,
+                        "X-Schoolbooth-Timestamp": timestamp,
+                        "X-Schoolbooth-Signature": sig,
                     }
                 else:
                     # No secret configured — still try, expect 401/500 but confirms reachability
@@ -4388,8 +4405,9 @@ class CameraApp(QMainWindow):
 
             headers = {
                 'Content-Type': 'application/json',
-                'X-PTASB-Timestamp': timestamp,
-                'X-PTASB-Signature': signature,
+                'User-Agent': f'Mozilla/5.0 (compatible; Schoolbooth/{APP_VERSION})',
+                'X-Schoolbooth-Timestamp': timestamp,
+                'X-Schoolbooth-Signature': signature,
             }
 
             data = None
