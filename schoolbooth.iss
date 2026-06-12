@@ -1,7 +1,7 @@
 [Setup]
 ; BASIC INFO
 AppName=Schoolbooth
-AppVersion=3.0.7
+AppVersion=3.0.8
 AppPublisher=I Know A Pro, LLC
 AppPublisherURL=https://www.iknowapro.net
 AppSupportURL=mailto:service@iknowapro.net
@@ -16,10 +16,18 @@ UninstallDisplayIcon={app}\schoolbooth.exe
 ; INSTALLER SETTINGS
 DefaultDirName={autopf}\Schoolbooth
 DefaultGroupName=Schoolbooth
-OutputBaseFilename=SchoolboothSetup-v3.0.7
+OutputBaseFilename=SchoolboothSetup-v3.0.8
 OutputDir=output
 Compression=lzma2
 SolidCompression=yes
+
+; If the running schoolbooth.exe still has the EXE locked when Inno starts
+; copying files, force-close it instead of failing. RestartApplications
+; tells Inno to relaunch it after the install completes (the [Run] section
+; already offers a "Launch SchoolBooth" postinstall option, so this is a
+; belt-and-suspenders safety net for the auto-updater path).
+CloseApplications=force
+RestartApplications=no
 
 [Files]
 ; MAIN APP FILES

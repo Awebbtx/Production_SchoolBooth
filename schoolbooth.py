@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.7"
+APP_VERSION   = "3.0.8"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -3271,90 +3271,151 @@ class CameraApp(QMainWindow):
         QMessageBox.warning(self, "Download Failed", f"Could not download the update:\n{err}")
 
     def _on_update_download_finished(self, dest_path):
+        import os
         if hasattr(self, "_update_download_progress") and self._update_download_progress:
             self._update_download_progress.close()
 
-        reply = QMessageBox.question(
-            self,
-            "Ready to Install",
-            "The update has been downloaded and is ready to install.\n\n"
-            "\u26a0\ufe0f  Windows SmartScreen notice:\n"
-            "Because this installer is not yet widely distributed, Windows may show\n"
-            "a blue \u201cWindows protected your PC\u201d warning when it launches.\n"
-            "If that happens, click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d to continue.\n\n"
-            "Launch the installer now?",
-            QMessageBox.Yes | QMessageBox.No,
+        if not os.path.exists(dest_path):
+            QMessageBox.warning(
+                self, "Download Issue",
+                f"The installer could not be found at:\n{dest_path}\n\nPlease try again."
+            )
+            return
+
+        try:
+            size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+        except Exception:
+            size_mb = 0
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Ready to Install")
+        msg.setText(
+            f"<b>Update downloaded</b> ({size_mb:.0f} MB).<br>"
+            "Schoolbooth will close so the installer can replace it."
         )
-        if reply != QMessageBox.Yes:
+        msg.setInformativeText(
+            "Windows may show a blue \u201cWindows protected your PC\u201d screen because\n"
+            "the installer is not yet widely distributed.\n"
+            "If that happens click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d.\n\n"
+            "Then a User Account Control (UAC) prompt will ask for permission \u2014 click Yes."
+        )
+        ok_btn  = msg.addButton("Install Now",   QMessageBox.AcceptRole)
+        msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.exec_()
+        if msg.clickedButton() is not ok_btn:
             return
 
         launch_ok, launch_err = self._launch_installer(dest_path)
         if not launch_ok:
-            # Error code 1223 = user cancelled UAC/SmartScreen prompt
-            if "1223" in launch_err or "cancelled" in launch_err.lower():
-                QMessageBox.information(
-                    self,
-                    "Installation Cancelled",
-                    "The installer was cancelled.\n\n"
-                    "If Windows showed a SmartScreen warning, click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d "
-                    "and try again, or run the installer manually from:\n\n"
-                    f"{dest_path}",
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Installer Launch Failed",
-                    "Could not start the installer.\n"
-                    f"Error: {launch_err}\n\n"
-                    f"You can run it manually from:\n{dest_path}",
-                )
+            QMessageBox.warning(
+                self,
+                "Installer Launch Failed",
+                f"Could not start the installer.\n\nError: {launch_err}\n\n"
+                f"You can run it manually from:\n{dest_path}",
+            )
             return
 
-        close_reply = QMessageBox.question(
-            self,
-            "Installer Started",
-            "The installer started successfully.\n"
-            "Close Schoolbooth now so the update can continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if close_reply == QMessageBox.Yes:
-            QApplication.quit()
+        # Installer launched. Quit so Inno can replace schoolbooth.exe.
+        # Use a singleShot so we return cleanly first, allowing Qt to flush
+        # any pending events (closes camera, etc.) before the process exits.
+        QTimer.singleShot(250, QApplication.quit)
 
     @staticmethod
     def _launch_installer(installer_path):
-        """Launch installer with elevation prompt on Windows."""
+        """Launch the downloaded installer.
+
+        Inno Setup installers are built with a `requireAdministrator` manifest,
+        so they must be started via ShellExecute (not CreateProcess/Popen) to
+        get the auto-elevation flow. We use ShellExecuteExW so we can grab the
+        process handle and verify the spawn actually succeeded.
+        """
         import os
         if not os.path.exists(installer_path):
             return False, "Installer file not found"
 
-        if sys.platform == "win32":
+        if sys.platform != "win32":
             try:
-                import ctypes
-                # Remove Mark-of-the-Web so SmartScreen doesn't hard-block the file
-                try:
-                    ctypes.windll.kernel32.DeleteFileW(installer_path + ":Zone.Identifier")
-                except Exception:
-                    pass
-                rc = ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", installer_path, None, os.path.dirname(installer_path), 1
-                )
-                if rc <= 32:
-                    # rc 5 = SE_ERR_ACCESSDENIED (SmartScreen hard-block or UAC denied)
-                    # rc 1223 does not come from ShellExecuteW directly; raised via GetLastError
-                    last_err = ctypes.windll.kernel32.GetLastError()
-                    if last_err == 1223:
-                        return False, f"ShellExecute error code {rc} (error 1223 - cancelled)"
-                    return False, f"ShellExecute error code {rc} (GetLastError={last_err})"
+                subprocess.Popen([installer_path])
                 return True, ""
             except Exception as exc:
                 return False, str(exc)
 
+        import ctypes
+        from ctypes import wintypes
+
+        # Best-effort: drop the Zone.Identifier ADS so SmartScreen is less
+        # aggressive. Files downloaded via urllib usually don't have it.
         try:
-            subprocess.Popen([installer_path])
+            ctypes.windll.kernel32.DeleteFileW(installer_path + ":Zone.Identifier")
+        except Exception:
+            pass
+
+        SEE_MASK_NOCLOSEPROCESS = 0x00000040
+        SEE_MASK_NOASYNC        = 0x00000100
+        SEE_MASK_FLAG_NO_UI     = 0x00000400  # we want UAC/SmartScreen UI; do NOT set this
+
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize",       wintypes.DWORD),
+                ("fMask",        wintypes.ULONG),
+                ("hwnd",         wintypes.HWND),
+                ("lpVerb",       wintypes.LPCWSTR),
+                ("lpFile",       wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory",  wintypes.LPCWSTR),
+                ("nShow",        ctypes.c_int),
+                ("hInstApp",     wintypes.HINSTANCE),
+                ("lpIDList",     ctypes.c_void_p),
+                ("lpClass",      wintypes.LPCWSTR),
+                ("hkeyClass",    wintypes.HKEY),
+                ("dwHotKey",     wintypes.DWORD),
+                ("hIconOrMonitor", wintypes.HANDLE),
+                ("hProcess",     wintypes.HANDLE),
+            ]
+
+        sei = SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+        sei.hwnd = None
+        # Use default verb (None) so Windows respects the installer's
+        # requireAdministrator manifest and shows the standard UAC prompt.
+        # This is more reliable than forcing 'runas' explicitly.
+        sei.lpVerb = None
+        sei.lpFile = installer_path
+        sei.lpParameters = None
+        sei.lpDirectory = os.path.dirname(installer_path)
+        sei.nShow = 1  # SW_SHOWNORMAL
+        sei.hInstApp = None
+        sei.hProcess = None
+
+        ShellExecuteExW = ctypes.windll.shell32.ShellExecuteExW
+        ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+        ShellExecuteExW.restype = wintypes.BOOL
+
+        ok = ShellExecuteExW(ctypes.byref(sei))
+        if not ok:
+            err = ctypes.windll.kernel32.GetLastError()
+            if err == 1223:
+                return False, "User cancelled the UAC prompt (error 1223)."
+            if err == 740:
+                return False, "Elevation required but could not be requested (error 740)."
+            return False, f"ShellExecuteExW failed (GetLastError={err})"
+
+        # If we got a process handle, the installer has launched.
+        if not sei.hProcess:
+            # No handle but ok=True: rare; treat as success.
             return True, ""
-        except Exception as exc:
-            return False, str(exc)
+
+        # Optional liveness verification — peek exit code; STILL_ACTIVE means running.
+        STILL_ACTIVE = 259
+        exit_code = wintypes.DWORD(0)
+        try:
+            ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+        except Exception:
+            pass
+        # Don't close the handle — let the OS clean up after we exit.
+        return True, ""
 
     def show_about(self):
         about_text = (
