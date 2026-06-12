@@ -23,7 +23,15 @@ class SettingsSchema:
         'output_auto_purge_days': {'default': 30, 'type': int},
         'touch_mode': {'default': False, 'type': bool},
         'attendant_mode': {'default': False, 'type': bool},
-        
+
+        # Dual monitor / secondary display settings
+        'dual_monitor_enabled': {'default': False, 'type': bool},
+        'dual_monitor_review_seconds': {'default': 45, 'type': int},
+        'dual_monitor_screen_index': {'default': 1, 'type': int},
+        'dual_monitor_countdown_seconds': {'default': 3, 'type': int},
+        'dual_monitor_flash_ms': {'default': 80, 'type': int},
+        'dual_monitor_flash_capture_delay_ms': {'default': 10, 'type': int},
+
         # Printer settings
         'photo_printer': {'default': '', 'type': str},
         'qr_printer': {'default': '', 'type': str},
@@ -46,6 +54,11 @@ class SettingsSchema:
         # QR settings
         'qr_header': {'default': '', 'type': str},
         'qr_footer': {'default': '', 'type': str},
+        'qr_header_bold': {'default': False, 'type': bool},
+        'qr_header_ul': {'default': False, 'type': bool},
+        'qr_footer_bold': {'default': False, 'type': bool},
+        'qr_footer_ul': {'default': False, 'type': bool},
+        'thermal_advanced_options': {'default': False, 'type': bool},
         'qr_font_size': {'default': 12, 'type': int},
         'qr_module_size': {'default': 3, 'type': int},
         'qr_error_correction': {'default': 'M', 'type': str},

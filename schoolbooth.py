@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.6"
+APP_VERSION   = "3.0.7"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -1856,13 +1856,33 @@ class QRPrintSettingsDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-        # 7. Button Box
+        # Wrap the long form content in a scroll area so smaller screens can
+        # still reach the OK/Cancel buttons at the bottom.
+        scroll_content = QWidget()
+        scroll_content.setLayout(layout)
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(scroll_content)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
+        # 7. Button Box (kept outside scroll area, always visible).
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
 
-        self.setLayout(layout)
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll_area)
+        outer_layout.addWidget(button_box)
+
+        self.setLayout(outer_layout)
+        # Constrain initial size so the dialog fits on small screens.
+        try:
+            screen_geo = QApplication.primaryScreen().availableGeometry()
+            max_h = max(400, int(screen_geo.height() * 0.85))
+            self.resize(640, min(780, max_h))
+        except Exception:
+            pass
 
         self.advanced_thermal_cb.toggled.connect(self._toggle_thermal_advanced)
         self._toggle_thermal_advanced(self.advanced_thermal_cb.isChecked())
@@ -2176,36 +2196,63 @@ class HealthCheckWorker(QThread):
         else:
             try:
                 import hmac as _hmac, hashlib as _hashlib, json as _json, time as _time
-                ping_url = wp_url.rstrip('/') + '/wp-json/pta-schoolbooth/v1/ping'
+                base = wp_url.rstrip('/')
+                # Try current namespace first, then legacy fallbacks (matches upload path).
+                ping_paths = [
+                    '/wp-json/schoolbooth/v1/ping',
+                    '/wp-json/pta-schoolbooth/v1/ping',
+                    '/wp-json/nbpta/v1/ping',
+                ]
                 secret = self.settings.get('wp_shared_secret', '').strip()
                 timestamp = str(int(_time.time()))
                 if len(secret) >= 32:
                     sig = _hmac.new(secret.encode(), (timestamp + '|ping').encode(), _hashlib.sha256).hexdigest()
                     headers = {
-                        "User-Agent": f"Schoolbooth/{APP_VERSION}",
+                        "User-Agent": f"Mozilla/5.0 (compatible; Schoolbooth/{APP_VERSION})",
                         "Content-Type": "application/json",
-                        "X-Schoolbooth-Timestamp": timestamp,
-                        "X-Schoolbooth-Signature": sig,
+                        "x-schoolbooth-timestamp": timestamp,
+                        "x-schoolbooth-signature": sig,
                     }
                 else:
                     # No secret configured — still try, expect 401/500 but confirms reachability
                     headers = {
-                        "User-Agent": f"Schoolbooth/{APP_VERSION}",
+                        "User-Agent": f"Mozilla/5.0 (compatible; Schoolbooth/{APP_VERSION})",
                         "Content-Type": "application/json",
                     }
                 body = _json.dumps({}).encode()
-                req = urllib_request.Request(ping_url, data=body, headers=headers, method='POST')
-                with urllib_request.urlopen(req, timeout=6) as resp:
-                    results['wordpress'] = (
-                        ('ok', 'Reachable') if resp.getcode() == 200
-                        else ('warn', f'HTTP {resp.getcode()}')
-                    )
-            except urllib_error.HTTPError as e:
-                if e.code in (401, 403, 500):
-                    # Auth failure but server is reachable
-                    results['wordpress'] = ('warn', f'Reachable (HTTP {e.code})')
+                last_status = None
+                last_error = None
+                wp_result = None
+                for path in ping_paths:
+                    ping_url = base + path
+                    try:
+                        req = urllib_request.Request(ping_url, data=body, headers=headers, method='POST')
+                        with urllib_request.urlopen(req, timeout=6) as resp:
+                            code = resp.getcode()
+                            wp_result = (
+                                ('ok', 'Reachable') if code == 200
+                                else ('warn', f'HTTP {code}')
+                            )
+                            break
+                    except urllib_error.HTTPError as e:
+                        if e.code == 404:
+                            last_status = 404
+                            continue  # Try next namespace
+                        if e.code in (401, 403, 500):
+                            wp_result = ('warn', f'Reachable (HTTP {e.code})')
+                        else:
+                            wp_result = ('warn', f'HTTP {e.code}')
+                        break
+                    except Exception as e:
+                        last_error = e
+                        continue
+                if wp_result is None:
+                    if last_status == 404:
+                        results['wordpress'] = ('warn', 'Plugin not installed')
+                    else:
+                        results['wordpress'] = ('error', 'Unreachable')
                 else:
-                    results['wordpress'] = ('warn', f'HTTP {e.code}')
+                    results['wordpress'] = wp_result
             except Exception:
                 results['wordpress'] = ('error', 'Unreachable')
 
@@ -2263,6 +2310,376 @@ class HealthCheckWorker(QThread):
             return ('warn', f'Status {status:#x}')
         except Exception:
             return ('error', 'Not found')
+
+
+class SecondaryDisplayWindow(QMainWindow):
+    """Fullscreen window for a second monitor.
+
+    Shows the live camera feed continuously. During the capture countdown a
+    large number is overlaid on top of the live feed so the subject can see
+    themselves while it counts down. A brief shutter flash fires immediately
+    before the camera frame is captured, then the captured image is displayed
+    for a configurable number of seconds before reverting to the live feed.
+    """
+
+    def __init__(self, parent=None, screen_index=1):
+        super().__init__(parent)
+        self.setWindowTitle("Schoolbooth Display")
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setStyleSheet("background-color: #000000;")
+
+        central = QWidget()
+        central.setStyleSheet("background-color: #000000;")
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.display_label = QLabel("Ready")
+        self.display_label.setAlignment(Qt.AlignCenter)
+        self._default_label_style = (
+            "background-color: #000000; color: #ffffff; font-size: 48px;"
+        )
+        self._flash_label_style = "background-color: #ffffff;"
+        self.display_label.setStyleSheet(self._default_label_style)
+        self.display_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.display_label)
+
+        # Overlay label for countdown; transparent background, floats on top.
+        self.overlay_label = QLabel(self.display_label)
+        self.overlay_label.setAlignment(Qt.AlignCenter)
+        self.overlay_label.setStyleSheet(
+            "background-color: transparent; color: #ffffff; "
+            "font-size: 480px; font-weight: bold;"
+        )
+        self.overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.overlay_label.hide()
+
+        # Bottom-left countdown shown during the captured-image review.
+        self.review_countdown_label = QLabel(self.display_label)
+        self.review_countdown_label.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 160); color: #ffffff; "
+            "font-size: 32px; font-weight: bold; "
+            "padding: 8px 14px; border-radius: 10px;"
+        )
+        self.review_countdown_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.review_countdown_label.hide()
+
+        self.setCentralWidget(central)
+
+        # State
+        self._review_mode = False
+        self._review_pixmap = None
+        self._review_timer = QTimer(self)
+        self._review_timer.setSingleShot(True)
+        self._review_timer.timeout.connect(self._end_review)
+
+        # Countdown state
+        self._countdown_active = False
+        self._countdown_remaining = 0
+        self._countdown_callback = None
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(self._countdown_tick)
+
+        # Shutter flash state
+        self._flash_active = False
+        self._flash_callback = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._end_flash)
+
+        # Review countdown tick (updates the bottom-left label every second).
+        self._review_seconds_remaining = 0
+        self._review_tick_timer = QTimer(self)
+        self._review_tick_timer.setInterval(1000)
+        self._review_tick_timer.timeout.connect(self._review_tick)
+
+        self._place_on_screen(screen_index)
+
+    def _place_on_screen(self, screen_index):
+        """Position the window on the requested screen, fullscreen."""
+        try:
+            screens = QApplication.screens()
+            if not screens:
+                return
+            idx = screen_index if 0 <= screen_index < len(screens) else (1 if len(screens) > 1 else 0)
+            geo = screens[idx].geometry()
+            self.setGeometry(geo)
+        except Exception as e:
+            print(f"SecondaryDisplayWindow: failed to place on screen {screen_index}: {e}")
+
+    def is_in_review(self):
+        return self._review_mode
+
+    def is_in_countdown(self):
+        return self._countdown_active
+
+    def is_busy(self):
+        return self._countdown_active or self._review_mode or self._flash_active
+
+    def update_live_frame(self, pixmap):
+        """Push a live camera frame. Live frames continue during countdown so
+        the subject sees themselves while the number is overlaid; paused only
+        during shutter flash and captured-image review.
+        """
+        if (self._review_mode or self._flash_active
+                or pixmap is None or pixmap.isNull()):
+            return
+        scaled = pixmap.scaled(
+            self.display_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.display_label.setPixmap(scaled)
+
+    def run_countdown(self, seconds, on_finish, flash_ms=80, flash_capture_delay_ms=10):
+        """Display a countdown overlaid on the live feed, then call on_finish."""
+        try:
+            secs = max(1, int(seconds))
+        except Exception:
+            secs = 3
+        self._countdown_timer.stop()
+        self._countdown_active = True
+        self._countdown_remaining = secs
+        self._countdown_callback = on_finish
+        self._pending_flash_ms = int(flash_ms)
+        self._pending_flash_capture_delay_ms = int(flash_capture_delay_ms)
+        self._show_overlay_text(str(secs))
+        self._countdown_timer.start()
+
+    def _show_overlay_text(self, text):
+        self.overlay_label.setGeometry(0, 0, self.display_label.width(), self.display_label.height())
+        self.overlay_label.setText(text)
+        self.overlay_label.raise_()
+        self.overlay_label.show()
+
+    def _hide_overlay_text(self):
+        self.overlay_label.hide()
+        self.overlay_label.setText("")
+
+    def _countdown_tick(self):
+        self._countdown_remaining -= 1
+        if self._countdown_remaining > 0:
+            self.overlay_label.setText(str(self._countdown_remaining))
+            return
+        self._countdown_timer.stop()
+        self._countdown_active = False
+        self._hide_overlay_text()
+        cb = self._countdown_callback
+        self._countdown_callback = None
+        flash_ms = getattr(self, '_pending_flash_ms', 80)
+        delay_ms = getattr(self, '_pending_flash_capture_delay_ms', 10)
+        self.flash_shutter(cb, flash_ms=flash_ms, capture_delay_ms=delay_ms)
+
+    def flash_shutter(self, on_capture, flash_ms=80, capture_delay_ms=10):
+        """Brief bright white flash; fire `on_capture` a few ms after the flash
+        paints, then clear the flash after `flash_ms`.
+        """
+        self._flash_active = True
+        self._flash_callback = on_capture
+        self.display_label.setPixmap(QPixmap())
+        self.display_label.setStyleSheet(self._flash_label_style)
+        self.display_label.setText("")
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            delay = max(0, int(capture_delay_ms))
+        except Exception:
+            delay = 10
+        if callable(on_capture):
+            QTimer.singleShot(delay, self._fire_flash_capture)
+        try:
+            duration = max(delay + 5, int(flash_ms))
+        except Exception:
+            duration = 80
+        self._flash_timer.start(duration)
+
+    def _fire_flash_capture(self):
+        cb = self._flash_callback
+        self._flash_callback = None
+        if callable(cb):
+            try:
+                cb()
+            except Exception as e:
+                print(f"SecondaryDisplayWindow flash capture callback error: {e}")
+
+    def _end_flash(self):
+        self._flash_active = False
+        # If a captured-image review just started, leave the displayed pixmap
+        # alone (otherwise we'd black it out before the user sees the photo).
+        self.display_label.setStyleSheet(self._default_label_style)
+        if not self._review_mode:
+            self.display_label.clear()
+
+    def show_captured_image(self, image_bgr, seconds):
+        """Display a captured image (BGR ndarray) for `seconds`, then revert to live."""
+        try:
+            if image_bgr is None:
+                return
+            rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            qt_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888).copy()
+            pix = QPixmap.fromImage(qt_img)
+            self._review_pixmap = pix
+            self._review_mode = True
+            self._hide_overlay_text()
+            scaled = pix.scaled(
+                self.display_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            self.display_label.setPixmap(scaled)
+            try:
+                secs = max(1, int(float(seconds)))
+            except Exception:
+                secs = 45
+            ms = secs * 1000
+            # Start the small bottom-left countdown.
+            self._review_seconds_remaining = secs
+            self._show_review_countdown(secs)
+            self._review_tick_timer.start()
+            self._review_timer.start(ms)
+        except Exception as e:
+            print(f"SecondaryDisplayWindow.show_captured_image error: {e}")
+            self._review_mode = False
+
+    def _show_review_countdown(self, secs):
+        self.review_countdown_label.setText(f"{secs}s")
+        self.review_countdown_label.adjustSize()
+        margin = 24
+        self.review_countdown_label.move(
+            margin,
+            self.display_label.height() - self.review_countdown_label.height() - margin,
+        )
+        self.review_countdown_label.raise_()
+        self.review_countdown_label.show()
+
+    def _review_tick(self):
+        self._review_seconds_remaining -= 1
+        if self._review_seconds_remaining <= 0:
+            self._review_tick_timer.stop()
+            return
+        self.review_countdown_label.setText(f"{self._review_seconds_remaining}s")
+        self.review_countdown_label.adjustSize()
+        margin = 24
+        self.review_countdown_label.move(
+            margin,
+            self.display_label.height() - self.review_countdown_label.height() - margin,
+        )
+
+    def _end_review(self):
+        self._review_mode = False
+        self._review_pixmap = None
+        self._review_tick_timer.stop()
+        self.review_countdown_label.hide()
+        self.display_label.setStyleSheet(self._default_label_style)
+        # Don't clear the pixmap — the next live frame will paint over it.
+        # Clearing here would cause a brief black flash on the secondary screen.
+
+    def resizeEvent(self, event):
+        if self._review_mode and self._review_pixmap is not None:
+            scaled = self._review_pixmap.scaled(
+                self.display_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            self.display_label.setPixmap(scaled)
+        self.overlay_label.setGeometry(0, 0, self.display_label.width(), self.display_label.height())
+        super().resizeEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+
+class SecondaryDisplaySettingsDialog(QDialog):
+    """Settings dialog for the secondary (dual monitor) display."""
+
+    def __init__(self, parent, settings):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.settings = settings
+        self.setWindowTitle("Secondary Display Settings")
+        self.setMinimumWidth(440)
+
+        form = QFormLayout()
+
+        self.enabled_cb = QCheckBox("Enable secondary display")
+        self.enabled_cb.setChecked(bool(settings.get('dual_monitor_enabled', False)))
+        form.addRow(self.enabled_cb)
+
+        self.screen_spin = QSpinBox()
+        self.screen_spin.setRange(0, 8)
+        self.screen_spin.setValue(int(settings.get('dual_monitor_screen_index', 1)))
+        form.addRow("Screen index (0 = primary):", self.screen_spin)
+
+        self.countdown_spin = QSpinBox()
+        self.countdown_spin.setRange(0, 10)
+        self.countdown_spin.setSuffix(" sec")
+        self.countdown_spin.setValue(int(settings.get('dual_monitor_countdown_seconds', 3)))
+        form.addRow("Capture countdown (0 = off):", self.countdown_spin)
+
+        self.review_spin = QSpinBox()
+        self.review_spin.setRange(1, 600)
+        self.review_spin.setSuffix(" sec")
+        self.review_spin.setValue(int(settings.get('dual_monitor_review_seconds', 45)))
+        form.addRow("Captured photo review duration:", self.review_spin)
+
+        self.flash_spin = QSpinBox()
+        self.flash_spin.setRange(0, 1000)
+        self.flash_spin.setSuffix(" ms")
+        self.flash_spin.setValue(int(settings.get('dual_monitor_flash_ms', 80)))
+        form.addRow("Shutter flash duration:", self.flash_spin)
+
+        self.flash_delay_spin = QSpinBox()
+        self.flash_delay_spin.setRange(0, 500)
+        self.flash_delay_spin.setSuffix(" ms")
+        self.flash_delay_spin.setValue(int(settings.get('dual_monitor_flash_capture_delay_ms', 10)))
+        form.addRow("Flash → capture delay:", self.flash_delay_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._on_save)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def _on_save(self):
+        was_enabled = bool(self.settings.get('dual_monitor_enabled', False))
+        prev_screen = int(self.settings.get('dual_monitor_screen_index', 1))
+        new_enabled = self.enabled_cb.isChecked()
+        new_screen = int(self.screen_spin.value())
+
+        self.settings['dual_monitor_enabled'] = new_enabled
+        self.settings['dual_monitor_screen_index'] = new_screen
+        self.settings['dual_monitor_countdown_seconds'] = int(self.countdown_spin.value())
+        self.settings['dual_monitor_review_seconds'] = int(self.review_spin.value())
+        self.settings['dual_monitor_flash_ms'] = int(self.flash_spin.value())
+        self.settings['dual_monitor_flash_capture_delay_ms'] = int(self.flash_delay_spin.value())
+        try:
+            self.settings.save()
+        except Exception:
+            pass
+
+        try:
+            if new_enabled and not was_enabled:
+                self.parent_window._open_secondary_display()
+            elif not new_enabled and was_enabled:
+                self.parent_window._close_secondary_display()
+            elif new_enabled and prev_screen != new_screen:
+                self.parent_window._close_secondary_display()
+                self.parent_window._open_secondary_display()
+            if hasattr(self.parent_window, 'dual_monitor_action'):
+                self.parent_window.dual_monitor_action.setChecked(new_enabled)
+        except Exception as e:
+            print(f"SecondaryDisplaySettingsDialog apply error: {e}")
+
+        self.accept()
 
 
 class CameraApp(QMainWindow):
@@ -2349,6 +2766,11 @@ class CameraApp(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)
+
+        # Secondary display window (dual monitor support)
+        self.secondary_display = None
+        if self.settings.get('dual_monitor_enabled', False):
+            QTimer.singleShot(500, self._open_secondary_display)
 
         # Health status — initial check after 2s, then every 30s
         self._health_worker = None
@@ -2589,12 +3011,18 @@ class CameraApp(QMainWindow):
         local_storage_action = settings_menu.addAction("Local Storage", self.open_local_storage_settings)
         wordpress_action = settings_menu.addAction("WordPress", self.open_wp_settings)
         hid_mapping_action = settings_menu.addAction("HID Mapping", self.open_hid_mapping_dialog)
+        secondary_display_action = settings_menu.addAction("Secondary Display", self.open_secondary_display_settings)
 
         view_menu = menu_bar.addMenu("View")
         self.crop_lines_action = view_menu.addAction("Show Crop Guides")
         self.crop_lines_action.setCheckable(True)
         self.crop_lines_action.setChecked(self.settings["show_crop_overlay"])
         self.crop_lines_action.triggered.connect(self.toggle_crop_overlay)
+
+        self.dual_monitor_action = view_menu.addAction("Dual Monitor Display")
+        self.dual_monitor_action.setCheckable(True)
+        self.dual_monitor_action.setChecked(bool(self.settings.get('dual_monitor_enabled', False)))
+        self.dual_monitor_action.triggered.connect(self.toggle_dual_monitor)
 
         help_menu = menu_bar.addMenu("Help")
         check_updates_action = help_menu.addAction("Check for Updates", self.check_for_updates)
@@ -4788,6 +5216,24 @@ class CameraApp(QMainWindow):
         dialog.exec_()
 
     def capture_image(self):
+        # If a secondary display is active, run a countdown there first, then
+        # re-enter this method (with the skip flag) to perform the actual capture.
+        if (self.secondary_display is not None
+                and not getattr(self, '_skip_countdown', False)
+                and not self.secondary_display.is_busy()):
+            countdown_seconds = self.settings.get('dual_monitor_countdown_seconds', 3)
+            try:
+                if int(countdown_seconds) > 0:
+                    self.secondary_display.run_countdown(
+                        countdown_seconds,
+                        self._capture_after_countdown,
+                        flash_ms=self.settings.get('dual_monitor_flash_ms', 80),
+                        flash_capture_delay_ms=self.settings.get('dual_monitor_flash_capture_delay_ms', 10),
+                    )
+                    return
+            except Exception:
+                pass  # Fall through to immediate capture on error.
+        self._skip_countdown = False
         print(f"Show QR Preview: {self.settings.get('show_qr_print_preview')}")
         print("capture_image: Starting capture process...")
         if not self.cap or not self.cap.isOpened():
@@ -4813,6 +5259,18 @@ class CameraApp(QMainWindow):
 
             self.last_captured = cropped.copy()
             self.update_last_capture_display()
+
+            # Show the captured image on the secondary display, if enabled.
+            if self.secondary_display is not None:
+                review_seconds = self.settings.get('dual_monitor_review_seconds', 45)
+                self.secondary_display.show_captured_image(self.last_captured, review_seconds)
+                # Pump the event loop so the shutter-flash timer can fire and
+                # the captured-image pixmap actually paints before the slow
+                # upload/print path blocks the GUI thread.
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
 
             capture_label = self.settings.get('capture_label', 'Session')
             self.last_capture_name = capture_label
@@ -4994,8 +5452,69 @@ class CameraApp(QMainWindow):
                 Qt.SmoothTransformation
             )
             self.camera_label.setPixmap(pixmap)
+
+            # Mirror live feed to secondary display when not in capture review.
+            if self.secondary_display is not None and not self.secondary_display.is_in_review():
+                self.secondary_display.update_live_frame(QPixmap.fromImage(qt_img))
         except Exception as e:
             print(f"Camera error: {str(e)}")
+
+
+    def _open_secondary_display(self):
+        """Create and show the secondary monitor window if not already shown."""
+        try:
+            if self.secondary_display is not None:
+                self.secondary_display.show()
+                return
+            screen_index = int(self.settings.get('dual_monitor_screen_index', 1) or 1)
+            self.secondary_display = SecondaryDisplayWindow(parent=None, screen_index=screen_index)
+            self.secondary_display.showFullScreen()
+        except Exception as e:
+            print(f"_open_secondary_display error: {e}")
+            self.secondary_display = None
+
+    def _close_secondary_display(self):
+        """Hide and dispose of the secondary monitor window."""
+        try:
+            if self.secondary_display is not None:
+                self.secondary_display.close()
+                self.secondary_display.deleteLater()
+        except Exception as e:
+            print(f"_close_secondary_display error: {e}")
+        finally:
+            self.secondary_display = None
+
+    def toggle_dual_monitor(self, checked=None):
+        """Enable/disable the dual monitor display from the View menu."""
+        if checked is None:
+            checked = not bool(self.settings.get('dual_monitor_enabled', False))
+        self.settings['dual_monitor_enabled'] = bool(checked)
+        try:
+            self.settings.save()
+        except Exception:
+            pass
+        if checked:
+            self._open_secondary_display()
+        else:
+            self._close_secondary_display()
+
+    def _capture_after_countdown(self):
+        """Called by the secondary display when its capture countdown finishes."""
+        self._skip_countdown = True
+        try:
+            self.capture_image()
+        finally:
+            self._skip_countdown = False
+
+    def open_secondary_display_settings(self):
+        """Open the Secondary Display Settings dialog."""
+        dialog = SecondaryDisplaySettingsDialog(self, self.settings)
+        try:
+            self.apply_modern_settings_dialog_style(dialog)
+            self.center_dialog(dialog)
+        except Exception:
+            pass
+        dialog.exec_()
 
 
     def save_settings(self):
@@ -5595,7 +6114,8 @@ class CameraApp(QMainWindow):
                                parity="N",
                                stopbits=1,
                                timeout=1,
-                               dsrdtr=False)
+                               dsrdtr=False,
+                               profile="TSP600")
 
             try:
                 # Error correction LEVEL
@@ -5712,6 +6232,12 @@ class CameraApp(QMainWindow):
         if self.cap and self.cap.isOpened():
             self.cap.release()
             print("Camera released")
+
+        # Close the secondary monitor window if open
+        try:
+            self._close_secondary_display()
+        except Exception:
+            pass
 
         # Explicitly exit the application
         QApplication.instance().quit()
