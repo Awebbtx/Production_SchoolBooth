@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.10"
+APP_VERSION   = "3.0.11"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -3235,11 +3235,30 @@ class CameraApp(QMainWindow):
             webbrowser.open(html_url)
 
     def _download_and_install_update(self, asset_url, latest_tag):
-        """Download installer in the background; only close app after confirmed launch."""
-        import tempfile, os
+        """Download installer to %LOCALAPPDATA%\\Schoolbooth\\Updates and install."""
+        import os
+
+        # Use a stable per-user location instead of TEMP. Some SmartScreen / AV
+        # configurations are aggressive about blocking executables that launch
+        # from %TEMP%, which is what was causing v3.0.8's "app closed but
+        # nothing happened" symptom.
+        base = os.environ.get('LOCALAPPDATA') or os.path.join(
+            os.path.expanduser('~'), 'AppData', 'Local'
+        )
+        updates_dir = os.path.join(base, 'Schoolbooth', 'Updates')
+        try:
+            os.makedirs(updates_dir, exist_ok=True)
+        except Exception:
+            import tempfile
+            updates_dir = tempfile.gettempdir()
+
+        self._update_log_path = os.path.join(updates_dir, 'update.log')
+        self._update_log(f"=== Update flow started for v{latest_tag} ===")
+        self._update_log(f"asset_url={asset_url}")
+        self._update_log(f"updates_dir={updates_dir}")
 
         filename = f"SchoolboothSetup-v{latest_tag}.exe"
-        dest_path = os.path.join(tempfile.gettempdir(), filename)
+        dest_path = os.path.join(updates_dir, filename)
 
         self._update_download_progress = QProgressDialog(
             f"Downloading Schoolbooth v{latest_tag}...", "Cancel", 0, 100, self
@@ -3264,9 +3283,22 @@ class CameraApp(QMainWindow):
         )
         self._update_download_worker.start()
 
+    def _update_log(self, message):
+        """Append a timestamped line to the updater log file. Never raises."""
+        try:
+            from datetime import datetime as _dt
+            path = getattr(self, '_update_log_path', None)
+            if not path:
+                return
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(f"[{_dt.now().isoformat(timespec='seconds')}] {message}\n")
+        except Exception:
+            pass
+
     def _on_update_download_failed(self, err):
         if hasattr(self, "_update_download_progress") and self._update_download_progress:
             self._update_download_progress.close()
+        self._update_log(f"Download FAILED: {err}")
         # Ignore explicit user cancel noise.
         if "cancel" in (err or "").lower():
             return
@@ -3277,7 +3309,10 @@ class CameraApp(QMainWindow):
         if hasattr(self, "_update_download_progress") and self._update_download_progress:
             self._update_download_progress.close()
 
+        self._update_log(f"Download finished -> {dest_path}")
+
         if not os.path.exists(dest_path):
+            self._update_log("ERROR: dest_path missing after download")
             QMessageBox.warning(
                 self, "Download Issue",
                 f"The installer could not be found at:\n{dest_path}\n\nPlease try again."
@@ -3289,48 +3324,86 @@ class CameraApp(QMainWindow):
         except Exception:
             size_mb = 0
 
+        self._update_log(f"Installer size: {size_mb:.1f} MB")
+
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Information)
         msg.setWindowTitle("Ready to Install")
         msg.setText(
             f"<b>Update downloaded</b> ({size_mb:.0f} MB).<br>"
-            "Schoolbooth will close so the installer can replace it."
+            "Click <b>Install Now</b> to launch the installer."
         )
         msg.setInformativeText(
-            "Windows may show a blue \u201cWindows protected your PC\u201d screen because\n"
-            "the installer is not yet widely distributed.\n"
-            "If that happens click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d.\n\n"
-            "Then a User Account Control (UAC) prompt will ask for permission \u2014 click Yes."
+            "What happens next:\n"
+            "1. Windows may show \u201cWindows protected your PC\u201d \u2014 click \u201cMore info\u201d \u2192 \u201cRun anyway\u201d.\n"
+            "2. A User Account Control prompt will ask for permission \u2014 click Yes.\n"
+            "3. The installer wizard will open; finish it, then Schoolbooth will be updated.\n\n"
+            f"If the installer doesn't appear, run it manually from:\n{dest_path}"
         )
         ok_btn  = msg.addButton("Install Now",   QMessageBox.AcceptRole)
         msg.addButton("Cancel", QMessageBox.RejectRole)
         msg.exec_()
         if msg.clickedButton() is not ok_btn:
+            self._update_log("User cancelled at Install Now dialog")
             return
 
+        self._update_log("Calling _launch_installer...")
         launch_ok, launch_err = self._launch_installer(dest_path)
+        self._update_log(f"_launch_installer returned ok={launch_ok}, err={launch_err!r}")
+
         if not launch_ok:
             QMessageBox.warning(
                 self,
                 "Installer Launch Failed",
                 f"Could not start the installer.\n\nError: {launch_err}\n\n"
-                f"You can run it manually from:\n{dest_path}",
+                f"You can run it manually from:\n{dest_path}\n\n"
+                f"Diagnostic log: {self._update_log_path}",
             )
+            # Open Explorer to the installer so the user can run it manually.
+            try:
+                import subprocess as _sp
+                _sp.Popen(['explorer.exe', '/select,', dest_path])
+            except Exception:
+                pass
             return
 
-        # Installer launched. Quit so Inno can replace schoolbooth.exe.
-        # Use a singleShot so we return cleanly first, allowing Qt to flush
-        # any pending events (closes camera, etc.) before the process exits.
-        QTimer.singleShot(250, QApplication.quit)
+        # Installer launched. Confirm with the user before quitting -- this is
+        # the key fix vs. v3.0.8: if the launch *looked* successful but no
+        # window actually appeared (silent SmartScreen kill, AV interference,
+        # etc.), the user can click Cancel and the app stays open so they can
+        # see what happened and run the installer manually.
+        confirm = QMessageBox(self)
+        confirm.setIcon(QMessageBox.Question)
+        confirm.setWindowTitle("Installer Launched")
+        confirm.setText(
+            "<b>The installer was started.</b><br>"
+            "If you can see the SchoolBooth setup wizard or a SmartScreen/UAC prompt,\n"
+            "click <b>Close Schoolbooth</b> below so the installer can replace it.<br><br>"
+            "If <b>no installer window appeared</b>, click <b>Stay Open</b> and run\n"
+            f"the installer manually from:<br><code>{dest_path}</code>"
+        )
+        close_btn = confirm.addButton("Close Schoolbooth",   QMessageBox.AcceptRole)
+        confirm.addButton("Stay Open", QMessageBox.RejectRole)
+        confirm.exec_()
+        if confirm.clickedButton() is close_btn:
+            self._update_log("User confirmed installer visible -- quitting app")
+            QTimer.singleShot(250, QApplication.quit)
+        else:
+            self._update_log("User reported NO installer visible -- staying open")
+            try:
+                import subprocess as _sp
+                _sp.Popen(['explorer.exe', '/select,', dest_path])
+            except Exception:
+                pass
 
-    @staticmethod
-    def _launch_installer(installer_path):
+    def _launch_installer(self, installer_path):
         """Launch the downloaded installer.
 
         Inno Setup installers are built with a `requireAdministrator` manifest,
         so they must be started via ShellExecute (not CreateProcess/Popen) to
         get the auto-elevation flow. We use ShellExecuteExW so we can grab the
-        process handle and verify the spawn actually succeeded.
+        process handle and verify the spawn actually succeeded, and we pass
+        our main window's HWND so the UAC prompt is properly parented.
         """
         import os
         if not os.path.exists(installer_path):
@@ -3346,8 +3419,7 @@ class CameraApp(QMainWindow):
         import ctypes
         from ctypes import wintypes
 
-        # Best-effort: drop the Zone.Identifier ADS so SmartScreen is less
-        # aggressive. Files downloaded via urllib usually don't have it.
+        # Drop the Zone.Identifier ADS so SmartScreen treats this less harshly.
         try:
             ctypes.windll.kernel32.DeleteFileW(installer_path + ":Zone.Identifier")
         except Exception:
@@ -3355,7 +3427,6 @@ class CameraApp(QMainWindow):
 
         SEE_MASK_NOCLOSEPROCESS = 0x00000040
         SEE_MASK_NOASYNC        = 0x00000100
-        SEE_MASK_FLAG_NO_UI     = 0x00000400  # we want UAC/SmartScreen UI; do NOT set this
 
         class SHELLEXECUTEINFOW(ctypes.Structure):
             _fields_ = [
@@ -3376,13 +3447,21 @@ class CameraApp(QMainWindow):
                 ("hProcess",     wintypes.HANDLE),
             ]
 
+        # Pass our window HWND so UAC prompt is properly parented and shown
+        # in the foreground (without a parent hwnd, on some Windows builds the
+        # prompt may be denied by foreground-lock policy and silently fail).
+        hwnd = None
+        try:
+            wid = self.winId()
+            if wid:
+                hwnd = int(wid)
+        except Exception:
+            hwnd = None
+
         sei = SHELLEXECUTEINFOW()
         sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
         sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
-        sei.hwnd = None
-        # Use default verb (None) so Windows respects the installer's
-        # requireAdministrator manifest and shows the standard UAC prompt.
-        # This is more reliable than forcing 'runas' explicitly.
+        sei.hwnd = hwnd
         sei.lpVerb = None
         sei.lpFile = installer_path
         sei.lpParameters = None
@@ -3395,28 +3474,58 @@ class CameraApp(QMainWindow):
         ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
         ShellExecuteExW.restype = wintypes.BOOL
 
+        self._update_log(
+            f"ShellExecuteExW: file={installer_path}, hwnd={hwnd}, dir={sei.lpDirectory}"
+        )
         ok = ShellExecuteExW(ctypes.byref(sei))
-        if not ok:
-            err = ctypes.windll.kernel32.GetLastError()
-            if err == 1223:
-                return False, "User cancelled the UAC prompt (error 1223)."
-            if err == 740:
-                return False, "Elevation required but could not be requested (error 740)."
-            return False, f"ShellExecuteExW failed (GetLastError={err})"
+        last_err = ctypes.windll.kernel32.GetLastError()
+        h_inst = int(sei.hInstApp) if sei.hInstApp else 0
+        self._update_log(
+            f"ShellExecuteExW result: ok={bool(ok)}, hInstApp={h_inst}, "
+            f"hProcess={'set' if sei.hProcess else 'NULL'}, GetLastError={last_err}"
+        )
 
-        # If we got a process handle, the installer has launched.
+        if not ok:
+            if last_err == 1223:
+                return False, "User cancelled the UAC prompt (error 1223)."
+            if last_err == 740:
+                return False, "Elevation required but could not be requested (error 740)."
+            return False, f"ShellExecuteExW failed (GetLastError={last_err})"
+
+        # hInstApp <= 32 is a documented failure indicator even when BOOL=TRUE
+        # on some legacy paths; explicitly check.
+        if h_inst != 0 and h_inst <= 32:
+            return False, f"ShellExecuteExW signalled failure (hInstApp={h_inst})"
+
         if not sei.hProcess:
-            # No handle but ok=True: rare; treat as success.
+            self._update_log("WARNING: hProcess is NULL after successful call")
             return True, ""
 
-        # Optional liveness verification — peek exit code; STILL_ACTIVE means running.
+        # Quick liveness check: if the new process exited within ~500ms, the
+        # OS killed it (SmartScreen, AV, etc.) and the user will see no UI.
         STILL_ACTIVE = 259
-        exit_code = wintypes.DWORD(0)
-        try:
-            ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
-        except Exception:
-            pass
-        # Don't close the handle — let the OS clean up after we exit.
+        WAIT_TIMEOUT = 0x00000102
+        WaitForSingleObject = ctypes.windll.kernel32.WaitForSingleObject
+        WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        WaitForSingleObject.restype = wintypes.DWORD
+
+        wait_rc = WaitForSingleObject(sei.hProcess, 500)
+        if wait_rc != WAIT_TIMEOUT:
+            # Process exited already -- get exit code.
+            exit_code = wintypes.DWORD(0)
+            try:
+                ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+            except Exception:
+                pass
+            self._update_log(
+                f"WARNING: installer process exited within 500ms (rc={exit_code.value})"
+            )
+            return False, (
+                f"Installer exited immediately (exit code {exit_code.value}). "
+                "This usually means SmartScreen or antivirus blocked it."
+            )
+
+        self._update_log("Installer process still running after 500ms -- launch verified")
         return True, ""
 
     def show_about(self):
