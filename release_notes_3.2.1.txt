@@ -1,0 +1,16 @@
+# Schoolbooth v3.2.1
+
+## Bug fix: countdown skipped on subsequent multi-shot captures
+
+In v3.2.0 Multi Shot mode, only the first photo of a session triggered the
+on-screen countdown -- every following capture in the same session fired
+instantly with no countdown. Root cause: `capture_image` treated the
+previous photo's "review" overlay on the secondary display as a busy
+state and skipped the countdown.
+
+Fix: pressing CAPTURE while the previous photo is still being reviewed
+now ends the review immediately and starts a fresh countdown over the
+live feed. Pressing CAPTURE during an active countdown or shutter flash
+is still ignored (unchanged).
+
+No behavior change in Single Shot mode.

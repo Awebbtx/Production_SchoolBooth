@@ -134,7 +134,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.2.0"
+APP_VERSION   = "3.2.1"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -5599,12 +5599,23 @@ class CameraApp(QMainWindow):
     def capture_image(self):
         # If a secondary display is active, run a countdown there first, then
         # re-enter this method (with the skip flag) to perform the actual capture.
+        # In multi-shot mode the previous photo's review may still be on screen
+        # when the attendant triggers the next capture; treat that as an
+        # interruption rather than a busy state so every shot gets a countdown.
         if (self.secondary_display is not None
                 and not getattr(self, '_skip_countdown', False)
-                and not self.secondary_display.is_busy()):
+                and not self.secondary_display.is_in_countdown()
+                and not getattr(self.secondary_display, '_flash_active', False)):
             countdown_seconds = self.settings.get('dual_monitor_countdown_seconds', 3)
             try:
                 if int(countdown_seconds) > 0:
+                    # End any in-progress review so the countdown starts over
+                    # the live feed instead of being skipped.
+                    if getattr(self.secondary_display, '_review_mode', False):
+                        try:
+                            self.secondary_display._end_review()
+                        except Exception:
+                            pass
                     self.secondary_display.run_countdown(
                         countdown_seconds,
                         self._capture_after_countdown,
