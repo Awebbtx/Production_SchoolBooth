@@ -36,7 +36,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QCheckBox,
                              QComboBox, QMessageBox, QFileDialog, QGroupBox,
                              QSpinBox, QDoubleSpinBox, QSlider, QGridLayout, QDialog,
-                             QDialogButtonBox, QMenu, QAction, QMenuBar,
+                             QDialogButtonBox, QMenu, QAction, QActionGroup, QMenuBar,
                              QLineEdit, QFormLayout, QSizePolicy, QTextEdit,
                              QInputDialog, QScrollArea, QToolTip, QListWidget, QStyle)
 from PyQt5 import QtSvg
@@ -50,6 +50,17 @@ import escpos.printer as p
 from settings_manager import SettingsManager
 
 ACCESS_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+# Multi-photo session limits / regex must match WP plugin's sanitize_session_id().
+SESSION_MAX_PHOTOS = 50
+
+
+def generate_session_id():
+    """Generate a session id that matches the WP plugin's allowed pattern
+    ``^[a-z0-9_]{1,64}$`` so the booth can opt-in to session-tagged uploads.
+    """
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"s_{ts}_{secrets.token_hex(4)}"
 
 
 def generate_secure_access_code(length=8):
@@ -123,7 +134,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.1.0"
+APP_VERSION   = "3.2.0"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -213,6 +224,7 @@ class HIDMappingDialog(QDialog):
 
         # Action mappings
         self._create_mapping_field("Capture Image", layout)
+        self._create_mapping_field("New Session", layout)
         self._create_mapping_field("Navigate Left", layout)
         self._create_mapping_field("Navigate Right", layout)
         self._create_mapping_field("Select", layout)
@@ -2733,6 +2745,24 @@ class CameraApp(QMainWindow):
         self.last_capture_name = self.settings.get('capture_label', 'Session')
         self.last_access_code = ''
         self.settings['capture_label'] = self.last_capture_name
+
+        # Multi-photo session state. The booth is *always* in a session: in
+        # 'single' mode each capture opens-and-closes its own one-photo
+        # session; in 'multi' mode the operator opens a session implicitly
+        # on first capture and closes it via the Session menu / HID key /
+        # 50-photo cap.
+        capture_mode = self.settings.get('capture_mode', 'single')
+        if capture_mode not in ('single', 'multi'):
+            capture_mode = 'single'
+        self.capture_mode = capture_mode
+        self.settings['capture_mode'] = capture_mode
+        self.session_id = None
+        self.session_code = None              # display form, e.g. "ABCD-1234"
+        self.session_code_api = None          # normalized form sent to WP
+        self.session_photos = []              # list of {filename, ts}
+        self.session_started = None
+        self.session_first_url = None         # public URL of first photo (used for session QR)
+        self.session_first_app_url = None
         self.update_check_status = "Not checked yet"
         self.latest_release_version = APP_VERSION
         self._update_check_silent = False
@@ -3043,6 +3073,30 @@ class CameraApp(QMainWindow):
         hid_mapping_action = settings_menu.addAction("HID Mapping", self.open_hid_mapping_dialog)
         secondary_display_action = settings_menu.addAction("Secondary Display", self.open_secondary_display_settings)
 
+        # Capture Mode submenu (single vs. multi-photo session)
+        capture_mode_menu = settings_menu.addMenu("Capture Mode")
+        self.capture_mode_single_action = capture_mode_menu.addAction("Single Shot")
+        self.capture_mode_single_action.setCheckable(True)
+        self.capture_mode_multi_action = capture_mode_menu.addAction("Multi Shot")
+        self.capture_mode_multi_action.setCheckable(True)
+        capture_mode_group = QActionGroup(self)
+        capture_mode_group.setExclusive(True)
+        capture_mode_group.addAction(self.capture_mode_single_action)
+        capture_mode_group.addAction(self.capture_mode_multi_action)
+        if self.capture_mode == 'multi':
+            self.capture_mode_multi_action.setChecked(True)
+        else:
+            self.capture_mode_single_action.setChecked(True)
+        self.capture_mode_single_action.triggered.connect(lambda: self._on_capture_mode_changed('single'))
+        self.capture_mode_multi_action.triggered.connect(lambda: self._on_capture_mode_changed('multi'))
+
+        # Session menu (only meaningful in multi mode but always visible)
+        session_menu = menu_bar.addMenu("Session")
+        self.new_session_action = session_menu.addAction("New Session", self.on_new_session_action)
+        self.new_session_action.setToolTip(
+            "Close the current multi-photo session, print one session QR, and start fresh."
+        )
+
         view_menu = menu_bar.addMenu("View")
         self.crop_lines_action = view_menu.addAction("Show Crop Guides")
         self.crop_lines_action.setCheckable(True)
@@ -3162,12 +3216,27 @@ class CameraApp(QMainWindow):
         device_id = self.settings.get('hid_device_id')
         # Check if this key event matches the Capture Image mapping
         capture_mapping = self.settings.get('hid_map_capture_image')
+        new_session_mapping = self.settings.get('hid_map_new_session')
+        handled = False
         if capture_mapping:
-            key_name, key_code = capture_mapping.split('(')
-            key_code = key_code[:-1]  # Remove the closing parenthesis
-            if str(event.key()) == key_code:
-                self.capture_image()
-        else:
+            try:
+                _, kc = capture_mapping.split('(')
+                kc = kc[:-1]
+                if str(event.key()) == kc:
+                    self.capture_image()
+                    handled = True
+            except ValueError:
+                pass
+        if not handled and new_session_mapping:
+            try:
+                _, kc = new_session_mapping.split('(')
+                kc = kc[:-1]
+                if str(event.key()) == kc:
+                    self.on_new_session_action()
+                    handled = True
+            except ValueError:
+                pass
+        if not handled:
             super().keyPressEvent(event)  # call normal keypress
 
     def open_output_dir(self):
@@ -3785,6 +3854,42 @@ class CameraApp(QMainWindow):
 
         left_panel.addWidget(self.camera_label, stretch=1)
 
+        # Capture button row: optional "New Session" (multi-mode only) +
+        # the main CAPTURE button.
+        capture_btn_row = QHBoxLayout()
+        capture_btn_row.setSpacing(8)
+
+        self.new_session_btn = QPushButton("NEW SESSION")
+        self.new_session_btn.clicked.connect(self.on_new_session_action)
+        self.new_session_btn.setMinimumHeight(70)
+        self.new_session_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                font-weight: bold;
+                padding: 12px 18px;
+                background-color: #6c5ce7;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background-color: #5746c4;
+            }
+            QPushButton:pressed {
+                background-color: #46389e;
+            }
+            QPushButton:disabled {
+                background-color: #b0aacc;
+                color: #efefef;
+            }
+        """)
+        self.new_session_btn.setToolTip(
+            "Close the current multi-photo session, print one session QR, and start fresh."
+        )
+        self.new_session_btn.setVisible(self.capture_mode == 'multi')
+        capture_btn_row.addWidget(self.new_session_btn, stretch=0)
+
         # Capture button - prominent primary action
         self.capture_btn = QPushButton("CAPTURE")
         self.capture_btn.clicked.connect(self.capture_image)
@@ -3808,7 +3913,8 @@ class CameraApp(QMainWindow):
             }
         """)
         self.capture_btn.setToolTip("Capture the current camera image and process it")
-        left_panel.addWidget(self.capture_btn, stretch=0)
+        capture_btn_row.addWidget(self.capture_btn, stretch=1)
+        left_panel.addLayout(capture_btn_row)
 
         main_layout.addLayout(left_panel, stretch=2)
 
@@ -3846,6 +3952,33 @@ class CameraApp(QMainWindow):
         right_panel.addWidget(overlay_section)
 
         # ========== 2. PHOTO PREVIEW SECTION ==========
+        # Side-by-side row: Session info panel (left) + Last Capture preview (right).
+        capture_row = QWidget()
+        capture_row_layout = QHBoxLayout(capture_row)
+        capture_row_layout.setContentsMargins(0, 0, 0, 0)
+        capture_row_layout.setSpacing(8)
+
+        session_section = QGroupBox("Session")
+        session_section.setStyleSheet(panel_group_style)
+        session_section.setMinimumWidth(220)
+        session_form = QFormLayout()
+        session_form.setLabelAlignment(Qt.AlignRight)
+        self.session_mode_label = QLabel("Single")
+        self.session_id_label = QLabel("--")
+        self.session_code_label = QLabel("--")
+        self.session_count_label = QLabel(f"0 / {SESSION_MAX_PHOTOS}")
+        self.session_started_label = QLabel("--")
+        for lbl in (self.session_id_label, self.session_code_label):
+            lbl.setStyleSheet("font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;")
+            lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        session_form.addRow("Mode:", self.session_mode_label)
+        session_form.addRow("ID:", self.session_id_label)
+        session_form.addRow("Code:", self.session_code_label)
+        session_form.addRow("Photos:", self.session_count_label)
+        session_form.addRow("Started:", self.session_started_label)
+        session_section.setLayout(session_form)
+        capture_row_layout.addWidget(session_section, stretch=0)
+
         photo_section = QGroupBox("Last Capture")
         photo_section.setStyleSheet(panel_group_style)
         photo_layout = QVBoxLayout()
@@ -3874,7 +4007,8 @@ class CameraApp(QMainWindow):
         photo_layout.addWidget(self.last_capture_label)
         
         photo_section.setLayout(photo_layout)
-        right_panel.addWidget(photo_section, stretch=1)
+        capture_row_layout.addWidget(photo_section, stretch=1)
+        right_panel.addWidget(capture_row, stretch=1)
 
         # ========== 3. QUICK ACTIONS SECTION ==========
         actions_section = QGroupBox("Quick Actions")
@@ -4089,7 +4223,27 @@ class CameraApp(QMainWindow):
             )
 
     def open_last_photo_link(self):
-        target_url = self.last_app_photo_url or self.last_photo_url
+        # In multi-shot mode the gallery URL is only useful once the session
+        # is closed (the consent form must be completed via the printed QR
+        # before the gallery becomes viewable). Block the click until then.
+        if (self.capture_mode == 'multi'
+                and self.session_id is not None):
+            QMessageBox.information(
+                self, "Session In Progress",
+                "The session gallery isn't viewable until the session is "
+                "closed. Click 'NEW SESSION' (or press the mapped HID key) "
+                "to print the QR and end the session, then the parent can "
+                "complete the consent form and view all photos."
+            )
+            return
+        target_url = ''
+        if (self.capture_mode == 'multi'
+                and self.session_code
+                and self.settings.get('wp_url')):
+            base = self.settings['wp_url'].rstrip('/')
+            target_url = f"{base}/?schoolbooth_code={self.session_code_api or self.session_code}"
+        if not target_url:
+            target_url = self.last_app_photo_url or self.last_photo_url
         if target_url:
             try:
                 import webbrowser
@@ -4995,18 +5149,34 @@ class CameraApp(QMainWindow):
             )
             return False
 
-    def upload_to_wordpress(self, image_path, capture_label):
+    def upload_to_wordpress(self, image_path, capture_label, session_id=None,
+                            session_access_code=None):
         """Handle WordPress upload using HTTPS API transport."""
         if not self.validate_wp_settings():
             return None
-        return self.upload_to_wordpress_api(image_path, capture_label, show_errors=True)
+        return self.upload_to_wordpress_api(
+            image_path, capture_label, show_errors=True,
+            session_id=session_id,
+            session_access_code=session_access_code,
+        )
 
-    def upload_to_wordpress_api(self, image_path, capture_label, show_errors=True):
-        """Upload to WordPress through HTTPS ingest API."""
+    def upload_to_wordpress_api(self, image_path, capture_label, show_errors=True,
+                                session_id=None, session_access_code=None):
+        """Upload to WordPress through HTTPS ingest API.
+
+        ``session_id`` (optional) tags the upload as part of a multi-photo
+        session. When supplied, ``session_access_code`` should be the booth's
+        already-allocated access code for that session so every photo in the
+        session shares one code (and one consent) on the portal side.
+        """
         try:
-            access_code = generate_secure_access_code()
-            # Use normalized code for API auth/signature consistency.
-            access_code_api = ''.join(ch for ch in access_code.upper() if ch.isalnum())
+            if session_access_code:
+                access_code = format_access_code_for_display(session_access_code)
+                access_code_api = ''.join(ch for ch in access_code.upper() if ch.isalnum())
+            else:
+                access_code = generate_secure_access_code()
+                # Use normalized code for API auth/signature consistency.
+                access_code_api = ''.join(ch for ch in access_code.upper() if ch.isalnum())
             today = datetime.now().strftime("%Y/%m")
             safe_label = ''.join(ch for ch in capture_label if ch.isalnum() or ch in ('-', '_')).strip() or 'Capture'
             remote_filename = f"{safe_label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -5039,6 +5209,7 @@ class CameraApp(QMainWindow):
                 'file_rel_path': file_rel_path,
                 'access_code': access_code_api,
                 'image_b64': base64.b64encode(image_bytes).decode('ascii'),
+                'session_id': session_id or '',
             }).encode('utf-8')
 
             headers = {
@@ -5518,7 +5689,16 @@ class CameraApp(QMainWindow):
                 self.last_app_photo_url = ""
                 self.last_access_code = ""
                 if self.settings['wp_link_enabled']:
-                    upload_result = self.upload_to_wordpress(filename, capture_label)
+                    # Open / reuse a session before uploading so every photo
+                    # in a multi-shot run shares the same access code and
+                    # carries the same session_id.
+                    if not self._ensure_session():
+                        return
+                    upload_result = self.upload_to_wordpress(
+                        filename, capture_label,
+                        session_id=self.session_id,
+                        session_access_code=self.session_code_api,
+                    )
                     if not upload_result:
                         print("capture_image: WP upload failed, aborting printing...")
                         return
@@ -5531,12 +5711,31 @@ class CameraApp(QMainWindow):
                         self.last_photo_url = upload_result
                         self.last_app_photo_url = upload_result
 
+                    # Record the photo against the active session.
+                    if self.session_id is not None:
+                        self.session_photos.append({
+                            'filename': filename,
+                            'ts': datetime.now(),
+                        })
+                        if not self.session_first_url:
+                            self.session_first_url = self.last_photo_url
+                            self.session_first_app_url = self.last_app_photo_url
+                        self.update_session_info_panel()
+
                 if self.last_app_photo_url or self.last_photo_url:
-                    self.open_link_btn.show()
+                    # In an open multi-shot session the gallery isn't viewable
+                    # yet (the shared access code only unlocks once the
+                    # consent form is completed via the printed QR), so keep
+                    # the button hidden until the session is finalized.
+                    if (self.capture_mode == 'multi'
+                            and self.session_id is not None):
+                        self.open_link_btn.hide()
+                    else:
+                        self.open_link_btn.show()
                 else:
                     self.open_link_btn.hide()
 
-                if self.settings['qr_printing_enabled']:
+                if self.settings['qr_printing_enabled'] and self.capture_mode == 'single':
                     if not self.last_photo_url:
                         QMessageBox.warning(
                             self,
@@ -5584,21 +5783,232 @@ class CameraApp(QMainWindow):
                     self.print_photo(filename, self.last_access_code)
                     print("capture_image: Printing photo should have trigger")
 
+                # Session lifecycle: single-mode auto-finalizes immediately
+                # (preserves legacy one-photo-per-session behavior). Multi-mode
+                # only auto-finalizes when the per-session photo cap is hit;
+                # otherwise the operator finalizes via the menu / HID key.
+                if self.capture_mode == 'single':
+                    self._finalize_session('single_shot')
+                elif (self.capture_mode == 'multi'
+                      and len(self.session_photos) >= SESSION_MAX_PHOTOS):
+                    QMessageBox.information(
+                        self, "Session Full",
+                        f"Session reached the {SESSION_MAX_PHOTOS}-photo limit. "
+                        "Printing session QR and starting a new session."
+                    )
+                    self._finalize_session('cap_reached')
+
                 if self.settings['attendant_mode']:
                     self.show_feedback("OK", "#4CAF50")  # Green success
                 else:
-                    # Original success message
                     success_msg = QMessageBox(self)
                     success_msg.setIcon(QMessageBox.Information)
-                    success_msg.setWindowTitle("Success")
-                    success_msg.setText(
-                        f"Image saved and processed!\nLocal: {filename}\nURL: {self.last_photo_url if self.last_photo_url else 'Not uploaded'}")
-
-                    QTimer.singleShot(3000, success_msg.close)
+                    success_msg.setWindowTitle("Upload complete")
+                    success_msg.setText("Upload complete.")
+                    QTimer.singleShot(1500, success_msg.close)
                     success_msg.exec_()
 
         except Exception as e:
             print(f"capture_image: Main try block error: {str(e)}")
+
+    # ------------------------------------------------------------------ #
+    # Multi-photo session helpers                                         #
+    # ------------------------------------------------------------------ #
+
+    def _ensure_session(self):
+        """Open a new session if none is currently active. Returns True on
+        success, False if (in multi mode) the per-session cap is already hit
+        and the operator must finalize first."""
+        if (self.capture_mode == 'multi'
+                and self.session_id is not None
+                and len(self.session_photos) >= SESSION_MAX_PHOTOS):
+            QMessageBox.warning(
+                self, "Session Full",
+                f"This session already has {SESSION_MAX_PHOTOS} photos. "
+                "Use Session > New Session (or the mapped HID key) to print "
+                "the session QR and start a new one."
+            )
+            return False
+        if self.session_id is None:
+            self.session_id = generate_session_id()
+            display_code = generate_secure_access_code()
+            self.session_code = display_code
+            self.session_code_api = ''.join(ch for ch in display_code.upper() if ch.isalnum())
+            self.session_photos = []
+            self.session_started = datetime.now()
+            self.session_first_url = None
+            self.session_first_app_url = None
+            self.update_session_info_panel()
+            print(f"[session] opened {self.session_id} (mode={self.capture_mode})")
+        return True
+
+    def _clear_session_state(self):
+        self.session_id = None
+        self.session_code = None
+        self.session_code_api = None
+        self.session_photos = []
+        self.session_started = None
+        self.session_first_url = None
+        self.session_first_app_url = None
+        self.update_session_info_panel()
+
+    def _finalize_session(self, reason='manual'):
+        """Print the session QR (when applicable) and clear session state.
+
+        ``reason`` is one of: ``manual`` (operator), ``cap_reached`` (50-photo
+        cap), ``single_shot`` (single mode auto-close), ``mode_switch``,
+        ``app_exit``.
+        """
+        if self.session_id is None:
+            return
+
+        photo_count = len(self.session_photos)
+        capture_label = self.settings.get('capture_label', 'Session')
+
+        # In single mode the per-photo QR was already produced by the normal
+        # capture path. Just clear state so the next capture opens a fresh
+        # session.
+        if reason == 'single_shot':
+            print(f"[session] closed {self.session_id} (single_shot, {photo_count} photo)")
+            self._clear_session_state()
+            return
+
+        # Multi-mode finalize: print one session-summary QR if we have any
+        # photo URL to point users at, the booth is configured to print QRs,
+        # and WP uploads are on.
+        printable = (
+            photo_count > 0
+            and bool(self.session_first_url)
+            and self.settings.get('qr_printing_enabled', False)
+            and self.settings.get('wp_link_enabled', False)
+        )
+        if printable:
+            access_code = self.session_code or ''
+            url = self.session_first_url
+            try:
+                if self.settings.get('qr_print_mode') == "Thermal Printer":
+                    com_port = self.settings.get('com_port')
+                    header_text = self.settings.get('qr_header', '')
+                    footer_text = self.settings.get('qr_footer', '')
+                    # Append photo count so the operator/parent can see it.
+                    session_header = (header_text + (" " if header_text else "")
+                                      + f"Your photos ({photo_count})").strip()
+                    self.print_qr_code_thermal(
+                        url, capture_label, access_code,
+                        session_header, footer_text, com_port,
+                    )
+                else:
+                    printer_name = self.settings.get('qr_printer')
+                    qr_header = self.settings.get('qr_header', '')
+                    qr_footer = self.settings.get('qr_footer', '')
+                    qr_font_size = self.settings.get('qr_font_size', 12)
+                    paper_size = self.settings.get('qr_paper_size', "4x6")
+                    qr_margin_top = self.settings.get('qr_margin_top', 10)
+                    qr_margin_left = self.settings.get('qr_margin_left', 10)
+                    qr_margin_right = self.settings.get('qr_margin_right', 10)
+                    qr_margin_bottom = self.settings.get('qr_margin_bottom', 10)
+                    session_header = (qr_header + (" " if qr_header else "")
+                                      + f"Your photos ({photo_count})").strip()
+                    self.print_qr_code_standard(
+                        url, capture_label, printer_name,
+                        session_header, qr_footer, qr_font_size, paper_size,
+                        qr_margin_top, qr_margin_left, qr_margin_right,
+                        qr_margin_bottom, access_code,
+                    )
+            except Exception as e:
+                print(f"[session] finalize print error: {e}")
+                reply = QMessageBox.question(
+                    self, "Session Print Failed",
+                    f"Printing the session QR failed:\n{e}\n\n"
+                    "Keep the session open so you can retry, or discard it?",
+                    QMessageBox.Retry | QMessageBox.Discard,
+                    QMessageBox.Retry,
+                )
+                if reply == QMessageBox.Retry:
+                    return  # leave session state intact for another try
+                # else fall through and clear
+
+        print(f"[session] closed {self.session_id} (reason={reason}, photos={photo_count})")
+        self._clear_session_state()
+
+    def on_new_session_action(self):
+        """Menu / HID-key handler to finalize the active multi-shot session."""
+        if self.capture_mode != 'multi':
+            return  # no-op in single mode
+        if self.session_id is None or not self.session_photos:
+            QMessageBox.information(
+                self, "No Active Session",
+                "There is no open multi-shot session yet. "
+                "Capture at least one photo first."
+            )
+            return
+        self._finalize_session('manual')
+
+    def _on_capture_mode_changed(self, new_mode):
+        """Settings menu handler — switch single<->multi, closing any active
+        session in the process."""
+        if new_mode not in ('single', 'multi'):
+            return
+        if new_mode == self.capture_mode:
+            return
+        # If a multi session is open with photos, ask before clobbering it.
+        if (self.capture_mode == 'multi'
+                and self.session_id is not None
+                and self.session_photos):
+            reply = QMessageBox.question(
+                self, "Close Active Session?",
+                f"A multi-shot session with {len(self.session_photos)} photo(s) "
+                "is currently open.\n\n"
+                "Yes  = print the session QR, close it, then switch mode.\n"
+                "No   = discard the session and switch mode.\n"
+                "Cancel = stay in multi-shot mode.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Cancel:
+                # Revert the menu check state.
+                self.capture_mode_multi_action.setChecked(True)
+                self.capture_mode_single_action.setChecked(False)
+                return
+            if reply == QMessageBox.Yes:
+                self._finalize_session('mode_switch')
+            else:
+                self._clear_session_state()
+        self.capture_mode = new_mode
+        self.settings['capture_mode'] = new_mode
+        try:
+            self.save_settings()
+        except Exception as e:
+            print(f"capture_mode save error: {e}")
+        self.update_session_info_panel()
+
+    def update_session_info_panel(self):
+        """Refresh the Session info panel labels from current state."""
+        if not hasattr(self, 'session_mode_label'):
+            return  # UI not built yet
+        mode_text = "Multi" if self.capture_mode == 'multi' else "Single"
+        self.session_mode_label.setText(mode_text)
+        if self.session_id is None:
+            self.session_id_label.setText("--")
+            self.session_code_label.setText("--")
+            self.session_count_label.setText(f"0 / {SESSION_MAX_PHOTOS}")
+            self.session_started_label.setText("--")
+        else:
+            self.session_id_label.setText(self.session_id)
+            self.session_code_label.setText(self.session_code or "--")
+            self.session_count_label.setText(
+                f"{len(self.session_photos)} / {SESSION_MAX_PHOTOS}"
+            )
+            started = self.session_started.strftime("%H:%M:%S") if self.session_started else "--"
+            self.session_started_label.setText(started)
+        # Keep the on-screen "New Session" button in sync with mode + state.
+        if hasattr(self, 'new_session_btn'):
+            self.new_session_btn.setVisible(self.capture_mode == 'multi')
+            self.new_session_btn.setEnabled(
+                self.capture_mode == 'multi'
+                and self.session_id is not None
+                and len(self.session_photos) > 0
+            )
 
     def update_last_capture_display(self):
         if self.last_captured is None:
@@ -6424,6 +6834,28 @@ class CameraApp(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event with save prompt"""
+        # If a multi-shot session is open with photos, give the operator a
+        # chance to finalize it (print the session QR) before exit.
+        if (self.capture_mode == 'multi'
+                and self.session_id is not None
+                and self.session_photos):
+            reply = QMessageBox.question(
+                self, 'Active Session',
+                f"A multi-shot session with {len(self.session_photos)} photo(s) is open.\n\n"
+                "Yes  = print the session QR, then exit.\n"
+                "No   = discard the session and exit.\n"
+                "Cancel = stay in the app.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Yes:
+                self._finalize_session('app_exit')
+            else:
+                self._clear_session_state()
+
         if self.unsaved_changes:
             reply = QMessageBox.question(
                 self, 'Unsaved Changes',

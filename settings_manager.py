@@ -180,6 +180,10 @@ class SettingsSchema:
         
         # Capture label (neutral identifier for photo session/event)
         'capture_label': {'default': 'Session', 'type': str},
+
+        # Capture mode: 'single' (one photo per session, legacy behavior) or
+        # 'multi' (operator-controlled multi-photo session, one shared QR).
+        'capture_mode': {'default': 'single', 'type': str},
     }
     
     # Float keys for special handling during load

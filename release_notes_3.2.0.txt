@@ -1,0 +1,55 @@
+# Schoolbooth v3.2.0
+
+## Multi-photo sessions
+
+The booth is now always "in a session". You pick the lifetime under
+Settings -> Capture Mode:
+
+- **Single Shot** (default, unchanged) -- each capture is its own one-photo
+  session and a per-photo QR prints immediately, exactly like v3.1.x.
+- **Multi Shot** -- capture as many photos as you like (up to 50) under one
+  shared access code. No QR prints until you press the new "NEW SESSION"
+  button (to the left of CAPTURE), pick Session -> New Session from the
+  menu bar, or hit the mapped HID key. At that point one session QR is
+  printed and the parent gets all the photos behind a single consent.
+
+### New UI
+
+- "Session" info panel to the left of "Last Capture" shows Mode, ID,
+  shared Code, photo count (N / 50), and start time.
+- "NEW SESSION" button only appears in Multi mode and is only enabled
+  once at least one photo has been captured in the current session.
+- Settings -> Capture Mode submenu: Single Shot / Multi Shot.
+- Session -> New Session menu entry (mirrors the button).
+- HID Mapping dialog now has a "New Session" mapping row right under
+  "Capture Image" so you can wire it to a foot pedal or any HID button.
+
+### Behavior details
+
+- 50-photo cap per session is enforced server-side and locally; hitting it
+  auto-prints the session QR and rotates to a new session.
+- Switching from Multi to Single (or closing the app) with an open session
+  prompts: Yes (print QR and continue) / No (discard) / Cancel.
+- "View Online" is hidden during an open Multi session (the gallery isn't
+  viewable until the consent form is completed via the printed QR). It
+  reappears in Single mode and after a Multi session is closed.
+
+### Other changes
+
+- Post-capture success popup replaced with a 1.5 s "Upload complete."
+  toast -- no more URL/path dump for attendants.
+
+### Server requirement
+
+Pairs with **Schoolbooth WordPress plugin v3.4.1** (or newer), which adds
+session_id tagging through every audit event and wires up the portal's
+Download All / Delete All buttons. v3.2.0 will still upload happily
+against older plugin versions, but session_id tagging will be silently
+ignored on the server.
+
+### Upgrade
+
+Install the new installer over the top of v3.1.x. Settings (including
+HID mapping) are preserved. The new `capture_mode` setting defaults to
+`single`, so the first launch behaves exactly like v3.1.x until you flip
+to Multi Shot.
