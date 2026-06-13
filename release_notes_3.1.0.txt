@@ -1,0 +1,41 @@
+# Schoolbooth v3.1.0
+
+## PyInstaller onedir build — fixes Qt5Core.dll fastfail crash for good
+
+Versions 3.0.11 through 3.0.14 were built with PyInstaller's **onefile**
+mode. On every launch, that mode unpacks Python, PyQt5, OpenCV, and all
+other DLLs into `%TEMP%\_MEI<random>\` and loads them from there. On
+some hardened Windows machines (locked-down user accounts, aggressive
+AV/EDR, slow disks), that extraction step is unreliable — Qt5Core.dll
+can be partially copied or load-time corrupted, causing
+`STATUS_STACK_BUFFER_OVERRUN` (0xc0000409) inside Qt's CRT init.
+
+The v3.0.13 mitigations (bundled VC++ Redist, x64 install path, stale
+`_MEI*` cleanup) helped but didn't eliminate the failure on the
+affected machine.
+
+### Fix
+v3.1.0 switches to PyInstaller **onedir** mode. All DLLs and resources
+ship in `C:\Program Files\Schoolbooth\_internal\` and load directly
+from there — no `%TEMP%` extraction step at all. This is also faster
+to start.
+
+### What's different from a user perspective
+- Install footprint goes from a single 120 MB `.exe` to a folder
+  (`Program Files\Schoolbooth\`) of roughly the same size.
+- Cold launch is faster because there's no per-launch unpack.
+- Antivirus has fewer false-positive opportunities — DLLs are scanned
+  once at install time instead of at every launch.
+
+### If you're updating from v3.0.x
+Recommended: uninstall the previous version first
+(Settings → Apps → Schoolbooth → Uninstall) before installing v3.1.0,
+to make sure leftover files from the onefile install are cleared.
+
+All v3.0.14 fixes are still in place:
+- Auto-updater hardening (download to `%LOCALAPPDATA%`, post-launch
+  confirmation, parented UAC, liveness check, update.log diagnostics).
+- HID Mapping settings persist on OK.
+- Local Storage dialog has a Change... button to move the output folder.
+- Auto-purge runs on the chosen folder.
+- VC++ 2015-2022 Redistributable bundled and silently installed.

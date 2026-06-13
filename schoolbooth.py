@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.14"
+APP_VERSION   = "3.1.0"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 

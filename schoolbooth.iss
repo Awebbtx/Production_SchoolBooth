@@ -1,7 +1,7 @@
 [Setup]
 ; BASIC INFO
 AppName=Schoolbooth
-AppVersion=3.0.14
+AppVersion=3.1.0
 AppPublisher=I Know A Pro, LLC
 AppPublisherURL=https://www.iknowapro.net
 AppSupportURL=mailto:service@iknowapro.net
@@ -16,7 +16,7 @@ UninstallDisplayIcon={app}\schoolbooth.exe
 ; INSTALLER SETTINGS
 DefaultDirName={autopf}\Schoolbooth
 DefaultGroupName=Schoolbooth
-OutputBaseFilename=SchoolboothSetup-v3.0.14
+OutputBaseFilename=SchoolboothSetup-v3.1.0
 OutputDir=output
 Compression=lzma2
 SolidCompression=yes
@@ -38,11 +38,18 @@ CloseApplications=force
 RestartApplications=no
 
 [Files]
-; MAIN APP FILES
-Source: "dist\schoolbooth.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "config.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "overlays.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "app.png"; DestDir: "{app}"; Flags: ignoreversion
+; MAIN APP FILES (PyInstaller onedir output -- everything under dist\schoolbooth\
+; ships into {app}\, including the bootloader exe and the _internal\ folder
+; with all DLLs and resources). Onedir avoids the %TEMP%\_MEI* extraction
+; step that was the root cause of Qt5Core.dll fastfail (0xc0000409) on
+; startup with the previous onefile build.
+Source: "dist\schoolbooth\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Files we still keep next to the EXE for compatibility with existing code
+; that resolves them relative to the install dir (settings_manager migrates
+; config.json on first launch under %LOCALAPPDATA%\Schoolbooth).
+Source: "config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "overlays.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
 Source: "LICENSE.TXT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "watermarks\*"; DestDir: "{app}\watermarks"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
