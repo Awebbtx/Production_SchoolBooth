@@ -9,7 +9,66 @@ This production release uses one flat JSON settings format only.
 
 import json
 import os
+import shutil
+import sys
 from typing import Any, Dict
+
+
+def _resolve_settings_path(filename: str) -> str:
+    """Resolve `filename` to a writable absolute path.
+
+    When the app is running as a frozen PyInstaller EXE (i.e. installed to
+    a possibly read-only location like ``C:\\Program Files\\Schoolbooth``),
+    we redirect the settings file to a per-user writable directory under
+    ``%LOCALAPPDATA%\\Schoolbooth``. In dev mode the original relative path
+    is preserved so the repo workflow is unchanged.
+
+    On first run after upgrading from a release that wrote settings next to
+    the EXE, we copy the legacy file into the new location so the user
+    doesn't lose their configuration.
+    """
+    # Caller already gave us an absolute path -- respect it.
+    if os.path.isabs(filename):
+        return filename
+
+    frozen = bool(getattr(sys, 'frozen', False))
+    if not frozen:
+        return filename  # Dev mode: relative to cwd, current behavior.
+
+    # Frozen: pick a per-user writable location.
+    base = os.environ.get('LOCALAPPDATA') or os.path.join(
+        os.path.expanduser('~'), 'AppData', 'Local'
+    )
+    user_dir = os.path.join(base, 'Schoolbooth')
+    try:
+        os.makedirs(user_dir, exist_ok=True)
+    except Exception as exc:
+        print(f"Warning: could not create {user_dir}: {exc}")
+        return filename  # Last-resort fallback; save() may still fail.
+
+    user_path = os.path.join(user_dir, filename)
+
+    # One-time migration: if the user has no settings yet but a legacy
+    # config.json exists next to the EXE (or in cwd), copy it across.
+    if not os.path.exists(user_path):
+        legacy_candidates = []
+        try:
+            exe_dir = os.path.dirname(sys.executable)
+            legacy_candidates.append(os.path.join(exe_dir, filename))
+        except Exception:
+            pass
+        legacy_candidates.append(os.path.abspath(filename))
+
+        for legacy in legacy_candidates:
+            try:
+                if os.path.isfile(legacy) and os.path.abspath(legacy) != os.path.abspath(user_path):
+                    shutil.copy2(legacy, user_path)
+                    print(f"Migrated settings from {legacy} -> {user_path}")
+                    break
+            except Exception as exc:
+                print(f"Warning: could not migrate {legacy}: {exc}")
+
+    return user_path
 
 
 class SettingsSchema:
@@ -145,7 +204,7 @@ class SettingsManager:
         Args:
             settings_filename: Path to settings JSON file
         """
-        self.settings_filename = settings_filename
+        self.settings_filename = _resolve_settings_path(settings_filename)
         self._data: Dict[str, Any] = {}
         self._initialize_defaults()
         self.load()
@@ -247,6 +306,14 @@ class SettingsManager:
                 if key not in SettingsSchema.SETTINGS:
                     continue
 
+                # Skip None/null stored values: they would clobber the
+                # substituted defaults from _initialize_defaults (e.g. the
+                # computed output_dir under ~/Pictures/Schoolbooth) and
+                # cause downstream crashes in code that expects a real
+                # string/number.
+                if value is None:
+                    continue
+
                 expected_type = SettingsSchema.SETTINGS[key]['type']
 
                 try:
@@ -283,13 +350,19 @@ class SettingsManager:
             # Ensure directory exists
             os.makedirs(os.path.dirname(self.settings_filename) or '.', exist_ok=True)
             
-            with open(self.settings_filename, 'w') as f:
+            # Atomic write: write to a temp file, then replace. This avoids
+            # leaving a half-written config.json on disk if we crash mid-write
+            # (e.g. power loss, antivirus interference).
+            tmp_path = self.settings_filename + '.tmp'
+            with open(tmp_path, 'w') as f:
                 json.dump(self._data, f, indent=4)
+            os.replace(tmp_path, self.settings_filename)
             
             return True
         
         except Exception as e:
-            print(f"Error saving settings: {e}")
+            print(f"Error saving settings to {self.settings_filename}: {e}")
+            self.last_save_error = str(e)
             return False
     
     def reset_to_defaults(self) -> None:

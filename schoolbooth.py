@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.8"
+APP_VERSION   = "3.0.10"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -1607,7 +1607,9 @@ class LocalStorageSettingsDialog(QDialog):
         self.retention_days_spin.setSuffix(" days")
         settings_layout.addRow("Keep Local Captures For:", self.retention_days_spin)
 
-        output_dir = os.path.abspath(os.path.expanduser(self.settings.get('output_dir', os.path.expanduser('~/Pictures'))))
+        output_dir = os.path.abspath(os.path.expanduser(
+            self.settings.get('output_dir') or os.path.expanduser('~/Pictures/Schoolbooth')
+        ))
         self.output_dir_label = QLabel(output_dir)
         self.output_dir_label.setWordWrap(True)
         settings_layout.addRow("Output Folder:", self.output_dir_label)
@@ -3134,7 +3136,7 @@ class CameraApp(QMainWindow):
             super().keyPressEvent(event)  # call normal keypress
 
     def open_output_dir(self):
-        output_dir = self.settings.get("output_dir", os.path.expanduser("~/Pictures"))
+        output_dir = self.settings.get("output_dir") or os.path.expanduser("~/Pictures/Schoolbooth")
         output_dir = os.path.abspath(os.path.expanduser(output_dir))
         os.makedirs(output_dir, exist_ok=True)
         if sys.platform == "win32":
@@ -3489,7 +3491,9 @@ class CameraApp(QMainWindow):
         if not result['enabled']:
             return result
 
-        output_dir = os.path.abspath(os.path.expanduser(self.settings.get('output_dir', os.path.expanduser('~/Pictures'))))
+        output_dir = os.path.abspath(os.path.expanduser(
+            self.settings.get('output_dir') or os.path.expanduser('~/Pictures/Schoolbooth')
+        ))
         retention_days = max(1, int(self.settings.get('output_auto_purge_days', 30)))
 
         if not os.path.isdir(output_dir):
@@ -3990,9 +3994,10 @@ class CameraApp(QMainWindow):
         self.process_watermark()
 
     def set_output_dir(self):
+        current = self.settings.get("output_dir") or os.path.expanduser("~/Pictures/Schoolbooth")
         directory = QFileDialog.getExistingDirectory(
             self, "Select Output Directory",
-            self.settings["output_dir"]
+            current
         )
         if directory:
             self.settings["output_dir"] = directory
@@ -5336,7 +5341,7 @@ class CameraApp(QMainWindow):
             capture_label = self.settings.get('capture_label', 'Session')
             self.last_capture_name = capture_label
 
-            base_dir = self.settings["output_dir"]
+            base_dir = self.settings.get("output_dir") or os.path.expanduser("~/Pictures/Schoolbooth")
             today = datetime.now().strftime("%Y-%m-%d")
             save_folder = os.path.join(base_dir, today)
             os.makedirs(save_folder, exist_ok=True)
@@ -5581,7 +5586,13 @@ class CameraApp(QMainWindow):
     def save_settings(self):
         """Save all current settings to JSON file."""
         try:
-            self.settings.save()
+            ok = self.settings.save()
+            if not ok:
+                err = getattr(self.settings, 'last_save_error', 'unknown error')
+                QMessageBox.warning(
+                    self, "Save Error",
+                    f"Could not save settings to:\n{self.settings.settings_filename}\n\n{err}"
+                )
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Failed to save settings: {str(e)}")
 
