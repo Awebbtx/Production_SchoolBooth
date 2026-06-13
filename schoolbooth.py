@@ -123,7 +123,7 @@ from PyQt5.QtCore import Qt
 # ---------------------------------------------------------------------------
 # Application version and update source
 # ---------------------------------------------------------------------------
-APP_VERSION   = "3.0.13"
+APP_VERSION   = "3.0.14"
 GITHUB_OWNER  = "Awebbtx"
 GITHUB_REPO   = "Production_SchoolBooth"
 
@@ -1610,9 +1610,21 @@ class LocalStorageSettingsDialog(QDialog):
         output_dir = os.path.abspath(os.path.expanduser(
             self.settings.get('output_dir') or os.path.expanduser('~/Pictures/Schoolbooth')
         ))
+        # Track the working value so OK can persist any change made via Browse.
+        self._pending_output_dir = output_dir
         self.output_dir_label = QLabel(output_dir)
         self.output_dir_label.setWordWrap(True)
-        settings_layout.addRow("Output Folder:", self.output_dir_label)
+        self.output_dir_label.setStyleSheet("font-family: Consolas, monospace;")
+
+        change_dir_btn = QPushButton("Change...")
+        change_dir_btn.clicked.connect(self._choose_output_dir)
+
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(self.output_dir_label, 1)
+        dir_row.addWidget(change_dir_btn, 0)
+        dir_widget = QWidget()
+        dir_widget.setLayout(dir_row)
+        settings_layout.addRow("Output Folder:", dir_widget)
 
         settings_group.setLayout(settings_layout)
         layout.addWidget(settings_group)
@@ -1654,6 +1666,22 @@ class LocalStorageSettingsDialog(QDialog):
     def _apply_pending_settings(self):
         self.settings['output_auto_purge_enabled'] = self.auto_purge_cb.isChecked()
         self.settings['output_auto_purge_days'] = self.retention_days_spin.value()
+        # Persist the chosen output folder so captures land in the same place
+        # next launch and so other features (Open Output Folder, purge) agree.
+        if getattr(self, '_pending_output_dir', None):
+            self.settings['output_dir'] = self._pending_output_dir
+
+    def _choose_output_dir(self):
+        current = self._pending_output_dir or os.path.expanduser('~/Pictures/Schoolbooth')
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Folder",
+            current,
+        )
+        if chosen:
+            chosen_abs = os.path.abspath(os.path.expanduser(chosen))
+            self._pending_output_dir = chosen_abs
+            self.output_dir_label.setText(chosen_abs)
 
     def accept(self):
         self._apply_pending_settings()
@@ -3059,7 +3087,14 @@ class CameraApp(QMainWindow):
         dialog = HIDMappingDialog(self, settings=self.settings)
         self.apply_modern_settings_dialog_style(dialog)
         self.center_dialog(dialog)
-        dialog.exec_()
+        # Persist any HID mapping changes when the user clicks OK. Without
+        # this, the dialog mutates the in-memory settings dict but never
+        # writes config.json, so mappings are lost on relaunch.
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                self.save_settings()
+            except Exception as exc:
+                print(f"Failed to save HID mapping settings: {exc}")
 
     def apply_modern_settings_dialog_style(self, dialog):
         """Apply a touch/mouse-friendly visual layer to settings dialogs."""

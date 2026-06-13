@@ -1,0 +1,26 @@
+# Schoolbooth v3.0.14
+
+## Bug fixes
+
+### HID Mapping settings were not persisted
+The HID Mapping dialog wrote your device selection and key mappings to
+the in-memory settings object but never called `save()`, so all changes
+were lost the moment Schoolbooth was relaunched. The dialog now persists
+to `config.json` whenever you click OK.
+
+### Local Storage dialog had no way to change the output folder
+The Local Storage dialog displayed the output folder as a read-only
+label. Users couldn't redirect captures to an external drive or a
+different location, and the previously-existing internal `set_output_dir`
+helper was never wired to any menu/button.
+
+The dialog now has a **Change...** button next to the Output Folder
+label that opens a standard folder picker. The new path is saved to
+`config.json` when you click OK and applies immediately to:
+
+- Where new captures are written
+- The Open Output Folder action in the File menu
+- The auto-purge job
+
+All other v3.0.13 fixes (VC++ Redist bundling, x64 install path, stale
+`%TEMP%\\_MEI*` cleanup) remain in place.
