@@ -56,6 +56,17 @@ try {
     Write-Host "[3/4] Building executable with PyInstaller..."
     Invoke-Python -m PyInstaller schoolbooth.spec --noconfirm
 
+    # Ensure VC++ 2015-2022 Redistributable bootstrapper is present for the
+    # Inno installer. It's not committed to git (~25 MB), just downloaded
+    # once and cached locally.
+    $redistDir = Join-Path $repoRoot 'redist'
+    $redistExe = Join-Path $redistDir 'vc_redist.x64.exe'
+    if (-not (Test-Path $redistExe)) {
+        Write-Host "Downloading VC++ Redistributable (x64)..."
+        New-Item -ItemType Directory -Force -Path $redistDir | Out-Null
+        Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $redistExe -UseBasicParsing
+    }
+
     if ($NoInno) {
         Write-Host "Skipping Inno Setup build because -NoInno was provided."
         Write-Host "Executable output should be in .\dist"

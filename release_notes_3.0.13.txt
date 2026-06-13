@@ -1,0 +1,33 @@
+# Schoolbooth v3.0.13
+
+## Hotfix: Qt5Core.dll fastfail (0xc0000409) on startup
+
+Some machines without the **Microsoft Visual C++ 2015-2022 Redistributable**
+crash on launch with `Faulting module: Qt5Core.dll, Exception: 0xc0000409`
+(`STATUS_STACK_BUFFER_OVERRUN` / `__fastfail`). PyQt5 5.15 wheels link
+against the VC++ runtime, and Qt calls `__fastfail()` rather than producing
+a useful error when the runtime is missing or mismatched.
+
+### Fixes
+- **VC++ 2015-2022 Redistributable (x64) is now bundled** and installed
+  automatically by the setup wizard if not already present (registry
+  version check skips it on machines that already have a current version).
+- **Installer is now explicitly marked 64-bit** — `ArchitecturesAllowed=x64`,
+  `ArchitecturesInstallIn64BitMode=x64`. Previously the 32-bit Inno
+  bootstrap was installing into `Program Files (x86)`. Schoolbooth itself
+  is a 64-bit PyInstaller bundle; install now lands in `Program Files`.
+- **Stale `%TEMP%\_MEI*` extraction folders are cleaned at install time.**
+  PyInstaller onefile re-extracts Qt/Python DLLs to `%TEMP%` on every
+  launch; leftover folders from prior crashes occasionally get re-used
+  and trigger the same fastfail.
+
+### If you're updating from v3.0.11 or v3.0.12
+Both versions crash at startup on affected machines, so the in-app updater
+can't help. Download and run `SchoolboothSetup-v3.0.13.exe` manually.
+**Recommend uninstalling the previous version first** (Settings → Apps →
+Schoolbooth → Uninstall) to make sure you get a clean install into
+`Program Files\Schoolbooth` instead of the old `Program Files (x86)\Schoolbooth`.
+
+A future v3.1.0 will switch to PyInstaller onedir mode to eliminate the
+`%TEMP%` extraction step entirely, which is the underlying source of the
+fragility.

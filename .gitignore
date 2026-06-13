@@ -31,3 +31,6 @@ IKAPcam_License.rtf
 *.code-workspace
 Thumbs.db
 .DS_Store
+
+# VC++ Redist (downloaded by build script)
+redist/
